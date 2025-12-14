@@ -517,6 +517,14 @@ async def test_api(name: str, key: str) -> tuple[str, bool, str]:
             elif resp.status_code == 429:
                 return name, True, "Rate limited (key valid)"
             else:
+                # Check for Kagi-specific "insufficient credit" error
+                if name == "kagi" and resp.status_code == 400:
+                    try:
+                        data = resp.json()
+                        if data.get("error") and any(e.get("code") == 101 for e in data["error"]):
+                            return name, True, "No credits"
+                    except Exception:
+                        pass
                 return name, False, f"HTTP {resp.status_code}"
     except httpx.TimeoutException:
         return name, False, "Timeout"

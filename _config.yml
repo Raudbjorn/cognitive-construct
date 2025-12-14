@@ -1,0 +1,33 @@
+# GitHub Pages configuration
+# Note: Jekyll processing is disabled via .nojekyll
+# This file provides metadata for GitHub Pages
+
+title: Cognitive Construct
+description: Four cognitive skills that extend Claude with knowledge retrieval, persistent memory, structured reasoning, and agency.
+url: https://bro.town
+baseurl: ""
+
+# Repository info
+repository: Raudbjorn/cognitive-construct
+
+# Social/SEO
+author: Raudbjorn
+twitter:
+  card: summary
+
+# Exclude from processing (if Jekyll is ever re-enabled)
+exclude:
+  - README.md
+  - LICENSE
+  - "*.py"
+  - "**/*.py"
+  - "**/__pycache__"
+  - ".env*"
+  - "pyproject.toml"
+  - "uv.lock"
+  - scripts/
+  - docs/
+  - encyclopedia/scripts/
+  - inland-empire/scripts/
+  - rhetoric/scripts/
+  - volition/scripts/

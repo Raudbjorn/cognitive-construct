@@ -513,6 +513,14 @@ async def test_api(name: str, key: str) -> tuple[str, bool, str]:
             elif resp.status_code == 401:
                 return name, False, "Invalid key"
             elif resp.status_code == 403:
+                # Check for xAI-specific "no credits" error
+                if name == "xai":
+                    try:
+                        data = resp.json()
+                        if "credits" in data.get("error", "").lower():
+                            return name, True, "No credits"
+                    except Exception:
+                        pass
                 return name, False, "Access denied"
             elif resp.status_code == 429:
                 return name, True, "Rate limited (key valid)"

@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cognitive Construct - AI Enhancement Skills</title>
+    <meta name="description" content="Four cognitive skills that extend Claude with knowledge retrieval, persistent memory, structured reasoning, and agency.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0a0a0f;
+            --bg-card: #12121a;
+            --bg-card-hover: #1a1a25;
+            --text: #e4e4e7;
+            --text-dim: #71717a;
+            --accent: #8b5cf6;
+            --accent-dim: #6d28d9;
+            --border: #27272a;
+            --encyclopedia: #3b82f6;
+            --inland: #10b981;
+            --rhetoric: #f59e0b;
+            --volition: #ef4444;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 1.5rem;
+        }
+
+        /* Header */
+        header {
+            padding: 4rem 0 3rem;
+            text-align: center;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .logo {
+            font-size: 3rem;
+            margin-bottom: 0.5rem;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+            background: linear-gradient(135deg, var(--accent) 0%, #ec4899 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .tagline {
+            font-size: 1.25rem;
+            color: var(--text-dim);
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        /* Skills Grid */
+        .skills-section {
+            padding: 4rem 0;
+        }
+
+        .section-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 2rem;
+            text-align: center;
+        }
+
+        .skills-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .skill-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            transition: all 0.2s ease;
+            text-decoration: none;
+            color: inherit;
+            display: block;
+        }
+
+        .skill-card:hover {
+            background: var(--bg-card-hover);
+            transform: translateY(-2px);
+            border-color: var(--accent-dim);
+        }
+
+        .skill-header {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+        }
+
+        .skill-icon {
+            font-size: 1.75rem;
+        }
+
+        .skill-name {
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+
+        .skill-card.encyclopedia .skill-name { color: var(--encyclopedia); }
+        .skill-card.inland .skill-name { color: var(--inland); }
+        .skill-card.rhetoric .skill-name { color: var(--rhetoric); }
+        .skill-card.volition .skill-name { color: var(--volition); }
+
+        .skill-desc {
+            color: var(--text-dim);
+            font-size: 0.95rem;
+            margin-bottom: 1rem;
+        }
+
+        .skill-features {
+            list-style: none;
+            font-size: 0.85rem;
+        }
+
+        .skill-features li {
+            padding: 0.25rem 0;
+            color: var(--text-dim);
+        }
+
+        .skill-features li::before {
+            content: ">";
+            color: var(--accent);
+            margin-right: 0.5rem;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        /* Installation */
+        .install-section {
+            padding: 3rem 0;
+            border-top: 1px solid var(--border);
+        }
+
+        .install-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+        }
+
+        .install-step {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.5rem;
+        }
+
+        .step-number {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 2rem;
+            height: 2rem;
+            background: var(--accent-dim);
+            border-radius: 50%;
+            font-weight: 600;
+            font-size: 0.875rem;
+            margin-bottom: 1rem;
+        }
+
+        .step-title {
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+
+        .step-desc {
+            color: var(--text-dim);
+            font-size: 0.9rem;
+            margin-bottom: 1rem;
+        }
+
+        pre {
+            background: #000;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1rem;
+            overflow-x: auto;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+        }
+
+        code {
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--accent);
+        }
+
+        /* Architecture */
+        .arch-section {
+            padding: 3rem 0;
+            border-top: 1px solid var(--border);
+        }
+
+        .arch-diagram {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 2rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            overflow-x: auto;
+            white-space: pre;
+            line-height: 1.4;
+            color: var(--text-dim);
+        }
+
+        /* Footer */
+        footer {
+            padding: 2rem 0;
+            border-top: 1px solid var(--border);
+            text-align: center;
+            color: var(--text-dim);
+            font-size: 0.9rem;
+        }
+
+        footer a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        footer a:hover {
+            text-decoration: underline;
+        }
+
+        /* Links */
+        .links {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            margin-top: 1.5rem;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            font-weight: 500;
+            text-decoration: none;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--accent-dim);
+        }
+
+        .btn-secondary {
+            background: var(--bg-card);
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--accent-dim);
+        }
+
+        @media (max-width: 640px) {
+            h1 { font-size: 2rem; }
+            .tagline { font-size: 1rem; }
+            header { padding: 2rem 0; }
+            .skills-section { padding: 2rem 0; }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <div class="logo">🧠</div>
+            <h1>Cognitive Construct</h1>
+            <p class="tagline">Four cognitive skills that extend Claude with knowledge retrieval, persistent memory, structured reasoning, and agency.</p>
+            <div class="links">
+                <a href="https://github.com/Raudbjorn/cognitive-construct" class="btn btn-primary">
+                    <svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+                    GitHub
+                </a>
+                <a href="docs/" class="btn btn-secondary">Documentation</a>
+            </div>
+        </div>
+    </header>
+
+    <main>
+        <section class="skills-section">
+            <div class="container">
+                <h2 class="section-title">The Four Skills</h2>
+                <div class="skills-grid">
+                    <a href="encyclopedia/" class="skill-card encyclopedia">
+                        <div class="skill-header">
+                            <span class="skill-icon">📚</span>
+                            <span class="skill-name">Encyclopedia</span>
+                        </div>
+                        <p class="skill-desc">Knowledge retrieval from multiple sources with intelligent routing.</p>
+                        <ul class="skill-features">
+                            <li>Context7 library docs</li>
+                            <li>Exa & Perplexity search</li>
+                            <li>Repository analysis</li>
+                            <li>Auto-routing by query type</li>
+                        </ul>
+                    </a>
+
+                    <a href="inland-empire/" class="skill-card inland">
+                        <div class="skill-header">
+                            <span class="skill-icon">🧠</span>
+                            <span class="skill-name">Inland Empire</span>
+                        </div>
+                        <p class="skill-desc">Unified memory substrate for persistent context across sessions.</p>
+                        <ul class="skill-features">
+                            <li>LibSQL graph storage</li>
+                            <li>Mem0 semantic memory</li>
+                            <li>Session JSONL context</li>
+                            <li>Multi-backend queries</li>
+                        </ul>
+                    </a>
+
+                    <a href="rhetoric/" class="skill-card rhetoric">
+                        <div class="skill-header">
+                            <span class="skill-icon">💭</span>
+                            <span class="skill-name">Rhetoric</span>
+                        </div>
+                        <p class="skill-desc">Structured reasoning with thought tracking and multi-model deliberation.</p>
+                        <ul class="skill-features">
+                            <li>Thought revision tracking</li>
+                            <li>Multi-model debate</li>
+                            <li>Bias detection</li>
+                            <li>Convergence scoring</li>
+                        </ul>
+                    </a>
+
+                    <a href="volition/" class="skill-card volition">
+                        <div class="skill-header">
+                            <span class="skill-icon">⚡</span>
+                            <span class="skill-name">Volition</span>
+                        </div>
+                        <p class="skill-desc">Agency and execution with semantic code editing and LLM consultation.</p>
+                        <ul class="skill-features">
+                            <li>LSP-powered editing</li>
+                            <li>Multi-provider LLMs</li>
+                            <li>Web search integration</li>
+                            <li>Security queries</li>
+                        </ul>
+                    </a>
+                </div>
+            </div>
+        </section>
+
+        <section class="install-section">
+            <div class="container">
+                <h2 class="section-title">Quick Start</h2>
+                <div class="install-grid">
+                    <div class="install-step">
+                        <div class="step-number">1</div>
+                        <div class="step-title">Clone the repository</div>
+                        <p class="step-desc">Get the cognitive-construct skills package.</p>
+                        <pre>git clone https://github.com/Raudbjorn/cognitive-construct.git
+cd cognitive-construct</pre>
+                    </div>
+
+                    <div class="install-step">
+                        <div class="step-number">2</div>
+                        <div class="step-title">Run the setup wizard</div>
+                        <p class="step-desc">Configure API keys with the interactive TUI.</p>
+                        <pre>uv run scripts/setup.py</pre>
+                    </div>
+
+                    <div class="install-step">
+                        <div class="step-number">3</div>
+                        <div class="step-title">Test connectivity</div>
+                        <p class="step-desc">Verify your API keys are working.</p>
+                        <pre>uv run scripts/setup.py --test</pre>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="arch-section">
+            <div class="container">
+                <h2 class="section-title">Architecture</h2>
+                <div class="arch-diagram">
+                                    ┌─────────────────────────────────────────────────────────┐
+                                    │                    Claude Code                          │
+                                    │                  (Orchestrator)                         │
+                                    └───────────────────────┬─────────────────────────────────┘
+                                                            │
+                    ┌───────────────────┬───────────────────┼───────────────────┬───────────────────┐
+                    │                   │                   │                   │                   │
+            ┌───────▼───────┐   ┌───────▼───────┐   ┌───────▼───────┐   ┌───────▼───────┐
+            │  Encyclopedia │   │ Inland Empire │   │   Rhetoric    │   │   Volition    │
+            │  (Knowledge)  │   │   (Memory)    │   │  (Reasoning)  │   │   (Agency)    │
+            └───────┬───────┘   └───────┬───────┘   └───────┬───────┘   └───────┬───────┘
+                    │                   │                   │                   │
+            ┌───────▼───────┐   ┌───────▼───────┐   ┌───────▼───────┐   ┌───────▼───────┐
+            │ Context7      │   │ LibSQL Graph  │   │ Sequential    │   │ Serena LSP    │
+            │ Exa           │   │ Mem0 Cloud    │   │ Thinking      │   │ Cross-LLM     │
+            │ Perplexity    │   │ Session JSONL │   │ AI Counsel    │   │ Web Search    │
+            │ Kagi          │   │               │   │ VibeCheck     │   │ Shodan        │
+            └───────────────┘   └───────────────┘   └───────────────┘   └───────────────┘</div>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <div class="container">
+            <p>MIT License &middot; <a href="https://github.com/Raudbjorn/cognitive-construct">View on GitHub</a></p>
+        </div>
+    </footer>
+</body>
+</html>

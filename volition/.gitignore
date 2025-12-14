@@ -1,0 +1,6 @@
+# Data files (generated at runtime)
+audit.log
+*.jsonl
+rate_limits.json
+preferences.json
+__pycache__/

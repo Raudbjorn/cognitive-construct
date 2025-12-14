@@ -1,0 +1,6 @@
+# Data files (generated at runtime)
+*.db
+*.jsonl
+*.json
+__pycache__/
+.ruff_cache/

@@ -1,0 +1,8 @@
+# Data files (generated at runtime)
+thoughts.json
+learnings.json
+deliberations/
+sessions/
+transcripts/
+.pytest-state/
+__pycache__/

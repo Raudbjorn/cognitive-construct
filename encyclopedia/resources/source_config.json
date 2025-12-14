@@ -1,0 +1,25 @@
+{
+  "sources": {
+    "context7": {"priority": 100, "description": "Library documentation from Context7"},
+    "exa": {"priority": 80, "description": "Web and code search via Exa AI"},
+    "perplexity": {"priority": 70, "description": "AI-powered search via Perplexity"},
+    "mcp_git_ingest": {"priority": 60, "description": "Repository analysis"},
+    "kagi": {"priority": 50, "description": "High-quality web search (optional)"},
+    "searxng": {"priority": 40, "description": "Meta search engine (optional)"},
+    "codegraph": {"priority": 30, "description": "Code graph analysis (optional)"}
+  },
+  "routing": {
+    "library_docs": ["context7", "exa"],
+    "general_search": ["exa", "perplexity"],
+    "code_context": ["mcp_git_ingest", "exa", "codegraph"],
+    "repository": ["mcp_git_ingest"]
+  },
+  "deduplication": {
+    "similarity_threshold": 0.85,
+    "content_preview_length": 200
+  },
+  "timeouts": {
+    "query_timeout_seconds": 10.0,
+    "total_timeout_seconds": 30.0
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "name": "cognitive-construct",
+  "owner": {
+    "name": "Sveinbjörn Geirsson",
+    "email": "sveinbjorn@sveinbjorn.dev"
+  },
+  "metadata": {
+    "description": "Cognitive Construct - A modular AI enhancement system comprising four skills for knowledge, reasoning, memory, and agency.",
+    "version": "2.0.0"
+  },
+  "plugins": [
+    {
+      "name": "encyclopedia",
+      "description": "Knowledge retrieval from multiple sources. Search docs, web, and code with intelligent routing.",
+      "path": "encyclopedia"
+    },
+    {
+      "name": "inland-empire",
+      "description": "Unified memory substrate. Store facts, patterns, and context. Query with remember, consult, and stats commands.",
+      "path": "inland-empire"
+    },
+    {
+      "name": "rhetoric",
+      "description": "Structured reasoning and deliberation. Record thoughts, deliberate on decisions, review thinking patterns.",
+      "path": "rhetoric"
+    },
+    {
+      "name": "volition",
+      "description": "Agency and execution. Edit code semantically, invoke LLMs, search the web, and query security services.",
+      "path": "volition"
+    }
+  ]
+}

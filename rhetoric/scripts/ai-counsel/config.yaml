@@ -1,0 +1,123 @@
+# ai-counsel/config.yaml
+# Pure HTTP adapter configuration (v2.0)
+version: "2.0"
+
+# HTTP Adapters - the only supported adapter type
+adapters:
+  ollama:
+    type: http
+    base_url: "http://localhost:11434"
+    timeout: 300
+    max_retries: 3
+    # Valid models: llama2, mistral, codellama, qwen, etc.
+    # Run 'ollama list' to see available models
+    # Ollama is a local LLM runtime - no API key needed
+
+  lmstudio:
+    type: http
+    base_url: "http://localhost:1234"
+    timeout: 300
+    max_retries: 3
+    # Valid models: any model loaded in LM Studio
+    # LM Studio provides OpenAI-compatible API
+    # No API key needed for local instance
+
+  openrouter:
+    type: http
+    base_url: "https://openrouter.ai/api/v1"
+    api_key: "${OPENROUTER_API_KEY}"  # Environment variable from .env file
+    timeout: 300
+    max_retries: 3
+    # Valid models: anthropic/claude-3.5-sonnet, openai/gpt-4, meta-llama/llama-3.1-8b-instruct, etc.
+    # See https://openrouter.ai/docs for full model list
+    # Requires API key from https://openrouter.ai/keys
+
+defaults:
+  mode: "quick"
+  rounds: 2
+  max_rounds: 5
+  timeout_per_round: 120
+
+storage:
+  transcripts_dir: "transcripts"
+  format: "markdown"
+  auto_export: true
+
+deliberation:
+  # Convergence detection settings
+  convergence_detection:
+    enabled: true
+
+    # Similarity thresholds
+    semantic_similarity_threshold: 0.85  # Models converged if similarity >= this
+    divergence_threshold: 0.40  # Models diverging if similarity < this
+
+    # Round constraints
+    min_rounds_before_check: 1  # Check convergence starting from round 2
+    consecutive_stable_rounds: 2  # Require 2 stable rounds to confirm
+
+    # Secondary metrics
+    stance_stability_threshold: 0.80  # 80% of participants must have stable stances
+    response_length_drop_threshold: 0.40  # Flag if response length drops >40%
+
+  # Model-controlled early stopping
+  early_stopping:
+    enabled: true
+    threshold: 0.66  # Stop if >=66% of models want to stop (2/3 consensus)
+    respect_min_rounds: true  # Don't stop before defaults.rounds is reached
+
+  # Legacy settings (keep these)
+  convergence_threshold: 0.8
+  enable_convergence_detection: true
+
+  # File tree injection for Round 1
+  file_tree:
+    enabled: true
+    max_depth: 3
+    max_files: 100
+
+  # Tool security settings (prevents context contamination)
+  tool_security:
+    exclude_patterns:
+      - "transcripts/"  # Exclude deliberation transcripts
+      - "transcripts/**"
+      - ".git/"  # Exclude version control
+      - ".git/**"
+      - "node_modules/"  # Exclude dependencies
+      - "node_modules/**"
+      - ".venv/"  # Exclude Python virtual environments
+      - "venv/"
+      - "__pycache__/"  # Exclude Python cache
+    max_file_size_bytes: 1048576  # 1MB limit for read_file
+
+# Decision Graph Memory
+decision_graph:
+  enabled: true
+  db_path: "decision_graph.db"
+
+  # Budget-aware context injection parameters
+  context_token_budget: 1500  # Max tokens for context injection
+  tier_boundaries:
+    strong: 0.75  # Strong matches get full formatting (~500 tokens each)
+    moderate: 0.60  # Moderate matches get summary formatting (~200 tokens each)
+  query_window: 1000  # Recent decisions to query (scalability limit)
+
+  # Cache configuration
+  query_cache_size: 200  # L1 cache size for query results
+  embedding_cache_size: 500  # L2 cache size for embeddings
+  query_ttl: 300  # Cache TTL in seconds (5 minutes)
+
+  # Adaptive K configuration (retrieval candidate selection)
+  adaptive_k_small_threshold: 100
+  adaptive_k_medium_threshold: 1000
+  adaptive_k_small: 5
+  adaptive_k_medium: 3
+  adaptive_k_large: 2
+
+  # Similarity filtering
+  noise_floor: 0.40  # Filter out results below this similarity score
+
+  # Legacy settings
+  similarity_threshold: 0.6
+  max_context_decisions: 3
+  compute_similarities: true

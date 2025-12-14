@@ -1,0 +1,77 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mem0ai"
+version = "1.0.1"
+description = "Long-term memory for AI Agents"
+authors = [
+    { name = "Mem0", email = "founders@mem0.ai" }
+]
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.25.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "respx>=0.21",
+    "mypy>=1.8",
+    "ruff>=0.3",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+asyncio_mode = "auto"
+
+[tool.hatch.build.targets.wheel]
+packages = ["openmemory"]
+
+[tool.hatch.build.targets.wheel.shared-data]
+"README.md" = "README.md"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_ignores = true
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "I",    # isort
+    "N",    # pep8-naming
+    "W",    # pycodestyle warnings
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "SIM",  # flake8-simplify
+]
+
+[tool.hatch.envs.default.scripts]
+format = [
+    "ruff format",
+]
+format-check = [
+    "ruff format --check",
+]
+lint = [
+    "ruff check",
+]
+lint-fix = [
+    "ruff check --fix",
+]
+test = [
+    "pytest tests/ {args}",
+]

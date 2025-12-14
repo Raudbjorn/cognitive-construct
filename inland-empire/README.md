@@ -11,15 +11,15 @@ A unified memory substrate for Claude skills. Store facts, patterns, and context
 source /path/to/.env.local
 
 # Check backend status
-python3 inland-empire.py stats
+python3 inland-empire/scripts/inland_empire.py stats
 
 # Store memories
-python3 inland-empire.py remember "User prefers verbose errors" --type pattern
-python3 inland-empire.py remember "Database uses normalized schema" --type fact
-python3 inland-empire.py remember "Session note about auth flow" --type context
+python3 inland-empire/scripts/inland_empire.py remember "User prefers verbose errors" --type pattern
+python3 inland-empire/scripts/inland_empire.py remember "Database uses normalized schema" --type fact
+python3 inland-empire/scripts/inland_empire.py remember "Session note about auth flow" --type context
 
 # Query memories
-python3 inland-empire.py consult "user preferences" --depth deep
+python3 inland-empire/scripts/inland_empire.py consult "user preferences" --depth deep
 ```
 
 ## Architecture
@@ -29,12 +29,12 @@ Inland Empire unifies three memory backends behind sanitized aliases:
 | Alias | Backend | Storage | Use Case |
 |-------|---------|---------|----------|
 | `fact_memory` | memory_libsql | LibSQL/SQLite graph | Structured facts, entities, relations |
-| `pattern_memory` | mem0/openmemory | Hosted API or Postgres | Learned patterns, preferences |
+| `pattern_memory` | openmemory | Hosted API or Postgres | Learned patterns, preferences |
 | `context_memory` | JSONL file | Local session file | Session context, transient notes |
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    inland-empire.py                      │
+│                    inland_empire.py                      │
 │                    (Unified CLI)                         │
 ├─────────────────┬─────────────────┬─────────────────────┤
 │   fact_memory   │  pattern_memory │   context_memory    │
@@ -52,7 +52,7 @@ Inland Empire unifies three memory backends behind sanitized aliases:
 Store a memory to a specific backend.
 
 ```bash
-python3 inland-empire.py remember "<text>" [--type fact|pattern|context]
+python3 inland-empire/scripts/inland_empire.py remember "<text>" [--type fact|pattern|context]
 ```
 
 **Options:**
@@ -64,13 +64,13 @@ python3 inland-empire.py remember "<text>" [--type fact|pattern|context]
 **Examples:**
 ```bash
 # Store a fact (default)
-python3 inland-empire.py remember "Auth service runs on port 8080"
+python3 inland-empire/scripts/inland_empire.py remember "Auth service runs on port 8080"
 
 # Store a pattern
-python3 inland-empire.py remember "User prefers tabs over spaces" --type pattern
+python3 inland-empire/scripts/inland_empire.py remember "User prefers tabs over spaces" --type pattern
 
 # Store session context
-python3 inland-empire.py remember "Currently debugging login flow" --type context
+python3 inland-empire/scripts/inland_empire.py remember "Currently debugging login flow" --type context
 ```
 
 ### `consult`
@@ -78,7 +78,7 @@ python3 inland-empire.py remember "Currently debugging login flow" --type contex
 Query stored memories across backends.
 
 ```bash
-python3 inland-empire.py consult "<query>" [--depth shallow|deep] [--type fact|pattern|context]
+python3 inland-empire/scripts/inland_empire.py consult "<query>" [--depth shallow|deep] [--type fact|pattern|context]
 ```
 
 **Options:**
@@ -90,10 +90,10 @@ python3 inland-empire.py consult "<query>" [--depth shallow|deep] [--type fact|p
 **Examples:**
 ```bash
 # Search all backends
-python3 inland-empire.py consult "authentication"
+python3 inland-empire/scripts/inland_empire.py consult "authentication"
 
 # Deep search patterns only
-python3 inland-empire.py consult "user preferences" --depth deep --type pattern
+python3 inland-empire/scripts/inland_empire.py consult "user preferences" --depth deep --type pattern
 ```
 
 **Response Format:**
@@ -131,7 +131,7 @@ python3 inland-empire.py consult "user preferences" --depth deep --type pattern
 Display backend health and statistics.
 
 ```bash
-python3 inland-empire.py stats
+python3 inland-empire/scripts/inland_empire.py stats
 ```
 
 **Response Format:**
@@ -201,7 +201,8 @@ python3 inland-empire.py stats
 
 ```
 inland-empire/
-├── inland-empire.py      # Main CLI entrypoint
+├── scripts/
+│   └── inland_empire.py  # Main CLI entrypoint
 ├── SKILL.md              # Skill manifest
 ├── README.md             # This file
 ├── memory_libsql/        # LibSQL graph client

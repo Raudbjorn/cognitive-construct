@@ -11,13 +11,6 @@
 - **Web search** with reasoning models (openai-websearch-mcp)
 - **Security reconnaissance** with safety constraints (mcp-shodan)
 
-## Installation
-
-```bash
-# Install dependencies
-pip install httpx pydantic
-```
-
 ## Configuration
 
 Set API keys in `.env.local` or environment:
@@ -37,35 +30,35 @@ SHODAN_API_KEY=...
 ### Check Available Capabilities
 
 ```bash
-python3 volition.py capabilities
+python3 volition/scripts/volition.py capabilities
 ```
 
 ### Execute Actions (Auto-Routed)
 
 ```bash
-python3 volition.py act "refactor the authentication module for better security"
-python3 volition.py act "explain how this codebase handles errors"
-python3 volition.py act "search for latest Python 3.13 features"
+python3 volition/scripts/volition.py act "refactor the authentication module for better security"
+python3 volition/scripts/volition.py act "explain how this codebase handles errors"
+python3 volition/scripts/volition.py act "search for latest Python 3.13 features"
 ```
 
 ### Semantic Code Editing
 
 ```bash
-python3 volition.py edit "UserAuth.validate" "add rate limiting check at start"
-python3 volition.py edit "DatabasePool.connect" "add connection timeout" --project ./myapp
+python3 volition/scripts/volition.py edit "UserAuth.validate" "add rate limiting check at start"
+python3 volition/scripts/volition.py edit "DatabasePool.connect" "add connection timeout" --project ./myapp
 ```
 
 ### Query Services
 
 ```bash
 # Web search
-python3 volition.py query web "latest Python 3.13 features"
+python3 volition/scripts/volition.py query web "latest Python 3.13 features"
 
 # LLM consultation
-python3 volition.py query llm "best practices for JWT token rotation" --tag coding
+python3 volition/scripts/volition.py query llm "best practices for JWT token rotation" --tag coding
 
 # Security query (requires --confirm)
-python3 volition.py query security "exposed MongoDB instances" --confirm
+python3 volition/scripts/volition.py query security "exposed MongoDB instances" --confirm
 ```
 
 ## Output Format

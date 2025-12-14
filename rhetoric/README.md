@@ -8,16 +8,16 @@ Rhetoric provides structured reasoning capabilities for complex problem-solving.
 
 ```bash
 # Check system status
-python3 scripts/rhetoric.py status
+python3 rhetoric/scripts/rhetoric.py status
 
 # Record a thought
-python3 scripts/rhetoric.py think "We should use a factory pattern here" --session-id project-123
+python3 rhetoric/scripts/rhetoric.py think "We should use a factory pattern here" --session-id project-123
 
 # Deliberate on a question (requires 2+ model API keys)
-python3 scripts/rhetoric.py deliberate "Should we use microservices or monolith?" --rounds 2
+python3 rhetoric/scripts/rhetoric.py deliberate "Should we use microservices or monolith?" --rounds 2
 
 # Review thinking patterns
-python3 scripts/rhetoric.py review --session-id project-123
+python3 rhetoric/scripts/rhetoric.py review --session-id project-123
 ```
 
 ## Commands
@@ -26,28 +26,28 @@ python3 scripts/rhetoric.py review --session-id project-123
 Record a thought with structured metadata. Supports revision tracking and branching.
 
 ```bash
-python3 scripts/rhetoric.py think "<thought>" [--session-id <id>] [--revision-of <id>] [--branch-from <id>]
+python3 rhetoric/scripts/rhetoric.py think "<thought>" [--session-id <id>] [--revision-of <id>] [--branch-from <id>]
 ```
 
 ### `deliberate`
 Orchestrate multi-model debate on a question. Requires at least 2 configured API keys.
 
 ```bash
-python3 scripts/rhetoric.py deliberate "<question>" [--rounds <1-5>] [--context <text>]
+python3 rhetoric/scripts/rhetoric.py deliberate "<question>" [--rounds <1-5>] [--context <text>]
 ```
 
 ### `review`
 Analyze thinking patterns and detect cognitive biases using VibeCheck integration.
 
 ```bash
-python3 scripts/rhetoric.py review [--session-id <id>]
+python3 rhetoric/scripts/rhetoric.py review [--session-id <id>]
 ```
 
 ### `status`
 Show system status including available models and deliberation readiness.
 
 ```bash
-python3 scripts/rhetoric.py status
+python3 rhetoric/scripts/rhetoric.py status
 ```
 
 ## Configuration
@@ -60,7 +60,7 @@ For deliberation, configure at least 2 of these API keys:
 OPENAI_API_KEY=sk-...
 ANTHROPIC_API_KEY=sk-ant-...
 OPENROUTER_API_KEY=sk-or-...
-GOOGLE_CLOUD_API_KEY=AIza...   # or GEMINI_API_KEY
+GEMINI_API_KEY=AIza...         # Google AI Studio key (also accepts GOOGLE_CLOUD_API_KEY)
 OLLAMA_URL=http://localhost:11434
 ```
 

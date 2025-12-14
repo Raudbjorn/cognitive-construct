@@ -23,9 +23,9 @@ The skill automatically routes queries to the most appropriate source, merges re
 Search across knowledge sources with intelligent routing.
 
 ```bash
-python scripts/encyclopedia.py search "React hooks best practices"
-python scripts/encyclopedia.py search "repo:anthropics/claude-code how does auth work"
-python scripts/encyclopedia.py search "svelte runes" --sources context7,exa --limit 3
+python3 encyclopedia/scripts/encyclopedia.py search "React hooks best practices"
+python3 encyclopedia/scripts/encyclopedia.py search "repo:anthropics/claude-code how does auth work"
+python3 encyclopedia/scripts/encyclopedia.py search "svelte runes" --sources context7,exa --limit 3
 ```
 
 **Options:**
@@ -37,8 +37,8 @@ python scripts/encyclopedia.py search "svelte runes" --sources context7,exa --li
 Look up documentation for a specific library or API.
 
 ```bash
-python scripts/encyclopedia.py lookup "fastapi"
-python scripts/encyclopedia.py lookup "react" --version 18
+python3 encyclopedia/scripts/encyclopedia.py lookup "fastapi"
+python3 encyclopedia/scripts/encyclopedia.py lookup "react" --version 18
 ```
 
 **Options:**
@@ -49,8 +49,8 @@ python scripts/encyclopedia.py lookup "react" --version 18
 Analyze a code repository.
 
 ```bash
-python scripts/encyclopedia.py code "github.com/sveltejs/svelte" "what are runes"
-python scripts/encyclopedia.py code "anthropics/claude-code" "authentication flow" --depth deep
+python3 encyclopedia/scripts/encyclopedia.py code "github.com/sveltejs/svelte" "what are runes"
+python3 encyclopedia/scripts/encyclopedia.py code "anthropics/claude-code" "authentication flow" --depth deep
 ```
 
 **Options:**

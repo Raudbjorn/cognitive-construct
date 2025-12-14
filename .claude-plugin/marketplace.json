@@ -11,23 +11,23 @@
   "plugins": [
     {
       "name": "encyclopedia",
-      "description": "Knowledge retrieval from multiple sources. Search docs, web, and code with intelligent routing.",
-      "path": "encyclopedia"
+      "description": "Knowledge retrieval from multiple sources. Search docs, web, and code with intelligent routing via Context7, Exa, Perplexity, and Kagi.",
+      "path": "./encyclopedia"
     },
     {
       "name": "inland-empire",
-      "description": "Unified memory substrate. Store facts, patterns, and context. Query with remember, consult, and stats commands.",
-      "path": "inland-empire"
+      "description": "Unified memory substrate. Store facts, patterns, and context across LibSQL, Mem0, and session storage. Query with remember, consult, and stats commands.",
+      "path": "./inland-empire"
     },
     {
       "name": "rhetoric",
-      "description": "Structured reasoning and deliberation. Record thoughts, deliberate on decisions, review thinking patterns.",
-      "path": "rhetoric"
+      "description": "Structured reasoning and deliberation. Record thoughts with revision tracking, orchestrate multi-model debate, review thinking patterns and detect cognitive biases.",
+      "path": "./rhetoric"
     },
     {
       "name": "volition",
-      "description": "Agency and execution. Edit code semantically, invoke LLMs, search the web, and query security services.",
-      "path": "volition"
+      "description": "Agency and execution. Edit code semantically via LSP, invoke LLMs across providers, search the web, and query security services.",
+      "path": "./volition"
     }
   ]
 }

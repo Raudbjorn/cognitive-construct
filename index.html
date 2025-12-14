@@ -380,30 +380,42 @@
             </div>
         </section>
 
-        <section class="install-section">
+        <section class="install-section" id="install">
             <div class="container">
-                <h2 class="section-title">Quick Start</h2>
+                <h2 class="section-title">Installation</h2>
+                <p style="text-align: center; color: var(--text-dim); margin-bottom: 2rem; max-width: 700px; margin-left: auto; margin-right: auto;">Install skills in Claude Code using one of these methods.</p>
+
+                <div class="install-grid" style="margin-bottom: 2rem;">
+                    <div class="install-step">
+                        <div class="step-title" style="color: var(--accent); margin-bottom: 1rem;">Via GitHub Repository</div>
+                        <p class="step-desc">Register the repository directly in Claude Code.</p>
+                        <pre>/plugin marketplace add Raudbjorn/cognitive-construct</pre>
+                        <p class="step-desc" style="margin-top: 1rem;">Then install skills:</p>
+                        <pre>/plugin install encyclopedia@cognitive-construct
+/plugin install inland-empire@cognitive-construct
+/plugin install rhetoric@cognitive-construct
+/plugin install volition@cognitive-construct</pre>
+                    </div>
+
+                    <div class="install-step">
+                        <div class="step-title" style="color: var(--accent); margin-bottom: 1rem;">Via Web Marketplace</div>
+                        <p class="step-desc">Add the live marketplace endpoint.</p>
+                        <pre>/plugin marketplace add bro.town</pre>
+                        <p class="step-desc" style="margin-top: 1rem;">Then use the interactive plugin manager:</p>
+                        <pre>/plugin install</pre>
+                        <p class="step-desc" style="margin-top: 0.5rem;">Browse and select skills from the list.</p>
+                    </div>
+                </div>
+
                 <div class="install-grid">
-                    <div class="install-step">
-                        <div class="step-number">1</div>
-                        <div class="step-title">Clone the repository</div>
-                        <p class="step-desc">Get the cognitive-construct skills package.</p>
+                    <div class="install-step" style="grid-column: 1 / -1; max-width: 600px; margin: 0 auto;">
+                        <div class="step-title" style="color: var(--accent); margin-bottom: 1rem;">Manual Installation</div>
+                        <p class="step-desc">Clone the repository for full control and customization.</p>
                         <pre>git clone https://github.com/Raudbjorn/cognitive-construct.git
-cd cognitive-construct</pre>
-                    </div>
-
-                    <div class="install-step">
-                        <div class="step-number">2</div>
-                        <div class="step-title">Run the setup wizard</div>
-                        <p class="step-desc">Configure API keys with the interactive TUI.</p>
-                        <pre>uv run scripts/setup.py</pre>
-                    </div>
-
-                    <div class="install-step">
-                        <div class="step-number">3</div>
-                        <div class="step-title">Test connectivity</div>
-                        <p class="step-desc">Verify your API keys are working.</p>
-                        <pre>uv run scripts/setup.py --test</pre>
+cd cognitive-construct
+uv run scripts/setup.py        # Configure API keys
+uv run scripts/setup.py --test # Verify connectivity</pre>
+                        <p class="step-desc" style="margin-top: 1rem;">Or download skill folders directly and place them in <code>~/.claude/skills/</code></p>
                     </div>
                 </div>
             </div>

@@ -484,12 +484,12 @@ async def test_api(name: str, key: str) -> tuple[str, bool, str]:
         "together": ("https://api.together.xyz/v1/models", {"Authorization": f"Bearer {key}"}, "GET"),
         "xai": ("https://api.x.ai/v1/models", {"Authorization": f"Bearer {key}"}, "GET"),
         "exa": ("https://api.exa.ai/search", {"x-api-key": key, "Content-Type": "application/json"}, "POST", {"query": "test", "numResults": 1}),
-        "perplexity": ("https://api.perplexity.ai/chat/completions", {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}, "POST", {"model": "llama-3.1-sonar-small-128k-online", "messages": [{"role": "user", "content": "hi"}], "max_tokens": 1}),
-        "kagi": ("https://kagi.com/api/v0/summarize", {"Authorization": f"Bot {key}"}, "GET"),
+        "perplexity": ("https://api.perplexity.ai/chat/completions", {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}, "POST", {"model": "sonar", "messages": [{"role": "user", "content": "hi"}], "max_tokens": 1}),
+        "kagi": ("https://kagi.com/api/v0/enrich/web?q=test", {"Authorization": f"Bot {key}"}, "GET"),
         "tavily": ("https://api.tavily.com/search", {"Content-Type": "application/json"}, "POST", {"api_key": key, "query": "test", "max_results": 1}),
         "brave": ("https://api.search.brave.com/res/v1/web/search?q=test", {"X-Subscription-Token": key}, "GET"),
         "serper": ("https://google.serper.dev/search", {"X-API-KEY": key, "Content-Type": "application/json"}, "POST", {"q": "test"}),
-        "mem0": ("https://api.mem0.ai/v1/memories/", {"Authorization": f"Token {key}"}, "GET"),
+        "mem0": ("https://api.mem0.ai/v1/memories/?user_id=test", {"Authorization": f"Token {key}"}, "GET"),
         "shodan": (f"https://api.shodan.io/api-info?key={key}", {}, "GET"),
     }
 

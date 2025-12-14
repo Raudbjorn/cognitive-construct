@@ -471,69 +471,69 @@ def get_current_value(var_name: str, all_config: dict[str, dict[str, str]], dete
 # API Connectivity Testing
 # ============================================================================
 
-async def test_api(name: str, key: str) -> tuple[str, bool, str]:
-    """Test API connectivity. Returns (name, success, message)."""
-
+def get_api_test_config(name: str, key: str) -> tuple[str, dict[str, str], str, dict | None] | None:
+    """Get test configuration for an API. Returns (url, headers, method, body) or None."""
     tests = {
-        "openai": ("https://api.openai.com/v1/models", {"Authorization": f"Bearer {key}"}, "GET"),
-        "anthropic": ("https://api.anthropic.com/v1/models", {"x-api-key": key, "anthropic-version": "2023-06-01"}, "GET"),
-        "openrouter": ("https://openrouter.ai/api/v1/models", {"Authorization": f"Bearer {key}"}, "GET"),
-        "google": (f"https://generativelanguage.googleapis.com/v1/models?key={key}", {}, "GET"),
-        "mistral": ("https://api.mistral.ai/v1/models", {"Authorization": f"Bearer {key}"}, "GET"),
-        "deepseek": ("https://api.deepseek.com/models", {"Authorization": f"Bearer {key}"}, "GET"),
-        "together": ("https://api.together.xyz/v1/models", {"Authorization": f"Bearer {key}"}, "GET"),
-        "xai": ("https://api.x.ai/v1/models", {"Authorization": f"Bearer {key}"}, "GET"),
+        "openai": ("https://api.openai.com/v1/models", {"Authorization": f"Bearer {key}"}, "GET", None),
+        "anthropic": ("https://api.anthropic.com/v1/models", {"x-api-key": key, "anthropic-version": "2023-06-01"}, "GET", None),
+        "openrouter": ("https://openrouter.ai/api/v1/models", {"Authorization": f"Bearer {key}"}, "GET", None),
+        "google": (f"https://generativelanguage.googleapis.com/v1/models?key={key}", {}, "GET", None),
+        "mistral": ("https://api.mistral.ai/v1/models", {"Authorization": f"Bearer {key}"}, "GET", None),
+        "deepseek": ("https://api.deepseek.com/models", {"Authorization": f"Bearer {key}"}, "GET", None),
+        "together": ("https://api.together.xyz/v1/models", {"Authorization": f"Bearer {key}"}, "GET", None),
+        "xai": ("https://api.x.ai/v1/models", {"Authorization": f"Bearer {key}"}, "GET", None),
         "exa": ("https://api.exa.ai/search", {"x-api-key": key, "Content-Type": "application/json"}, "POST", {"query": "test", "numResults": 1}),
         "perplexity": ("https://api.perplexity.ai/chat/completions", {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}, "POST", {"model": "sonar", "messages": [{"role": "user", "content": "hi"}], "max_tokens": 1}),
-        "kagi": ("https://kagi.com/api/v0/enrich/web?q=test", {"Authorization": f"Bot {key}"}, "GET"),
+        "kagi": ("https://kagi.com/api/v0/enrich/web?q=test", {"Authorization": f"Bot {key}"}, "GET", None),
         "tavily": ("https://api.tavily.com/search", {"Content-Type": "application/json"}, "POST", {"api_key": key, "query": "test", "max_results": 1}),
-        "brave": ("https://api.search.brave.com/res/v1/web/search?q=test", {"X-Subscription-Token": key}, "GET"),
+        "brave": ("https://api.search.brave.com/res/v1/web/search?q=test", {"X-Subscription-Token": key}, "GET", None),
         "serper": ("https://google.serper.dev/search", {"X-API-KEY": key, "Content-Type": "application/json"}, "POST", {"q": "test"}),
-        "mem0": ("https://api.mem0.ai/v1/memories/?user_id=test", {"Authorization": f"Token {key}"}, "GET"),
-        "shodan": (f"https://api.shodan.io/api-info?key={key}", {}, "GET"),
+        "mem0": ("https://api.mem0.ai/v1/memories/?user_id=test", {"Authorization": f"Token {key}"}, "GET", None),
+        "shodan": (f"https://api.shodan.io/api-info?key={key}", {}, "GET", None),
     }
+    return tests.get(name)
 
-    if name not in tests:
+
+async def test_api(name: str, key: str, client: httpx.AsyncClient) -> tuple[str, bool, str]:
+    """Test API connectivity using shared client. Returns (name, success, message)."""
+    config = get_api_test_config(name, key)
+    if config is None:
         return name, False, "No test available"
 
-    test_info = tests[name]
-    url, headers = test_info[0], test_info[1]
-    method = test_info[2] if len(test_info) > 2 else "GET"
-    body = test_info[3] if len(test_info) > 3 else None
+    url, headers, method, body = config
 
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            if method == "GET":
-                resp = await client.get(url, headers=headers)
-            else:
-                resp = await client.post(url, headers=headers, json=body)
+        if method == "GET":
+            resp = await client.get(url, headers=headers)
+        else:
+            resp = await client.post(url, headers=headers, json=body)
 
-            if resp.status_code in (200, 201):
-                return name, True, "Connected"
-            elif resp.status_code == 401:
-                return name, False, "Invalid key"
-            elif resp.status_code == 403:
-                # Check for xAI-specific "no credits" error
-                if name == "xai":
-                    try:
-                        data = resp.json()
-                        if "credits" in data.get("error", "").lower():
-                            return name, True, "No credits"
-                    except Exception:
-                        pass
-                return name, False, "Access denied"
-            elif resp.status_code == 429:
-                return name, True, "Rate limited (key valid)"
-            else:
-                # Check for Kagi-specific "insufficient credit" error
-                if name == "kagi" and resp.status_code == 400:
-                    try:
-                        data = resp.json()
-                        if data.get("error") and any(e.get("code") == 101 for e in data["error"]):
-                            return name, True, "No credits"
-                    except Exception:
-                        pass
-                return name, False, f"HTTP {resp.status_code}"
+        if resp.status_code in (200, 201):
+            return name, True, "Connected"
+        elif resp.status_code == 401:
+            return name, False, "Invalid key"
+        elif resp.status_code == 403:
+            # Check for xAI-specific "no credits" error
+            if name == "xai":
+                try:
+                    data = resp.json()
+                    if "credits" in data.get("error", "").lower():
+                        return name, True, "No credits"
+                except Exception:
+                    pass
+            return name, False, "Access denied"
+        elif resp.status_code == 429:
+            return name, True, "Rate limited (key valid)"
+        else:
+            # Check for Kagi-specific "insufficient credit" error
+            if name == "kagi" and resp.status_code == 400:
+                try:
+                    data = resp.json()
+                    if data.get("error") and any(e.get("code") == 101 for e in data["error"]):
+                        return name, True, "No credits"
+                except Exception:
+                    pass
+            return name, False, f"HTTP {resp.status_code}"
     except httpx.TimeoutException:
         return name, False, "Timeout"
     except Exception as e:
@@ -541,10 +541,10 @@ async def test_api(name: str, key: str) -> tuple[str, bool, str]:
 
 
 async def run_all_tests(all_config: dict[str, dict[str, str]], detected: dict[str, str]) -> list[tuple[str, str, bool, str]]:
-    """Run all API tests concurrently."""
-    tasks = []
-    var_to_test = {}
+    """Run all API tests concurrently using a shared client."""
+    var_to_test: dict[str, tuple[str, str]] = {}
 
+    # Collect all variables that have test endpoints and values
     for skill_config in ALL_CONFIGS:
         for var in skill_config.variables:
             if var.test_endpoint and var.name not in var_to_test:
@@ -552,13 +552,20 @@ async def run_all_tests(all_config: dict[str, dict[str, str]], detected: dict[st
                 if value:
                     var_to_test[var.name] = (var.test_endpoint, value)
 
-    for var_name, (endpoint, key) in var_to_test.items():
-        tasks.append((var_name, test_api(endpoint, key)))
+    # Run all tests concurrently with shared client
+    async with httpx.AsyncClient(timeout=10) as client:
+        names = list(var_to_test.keys())
+        coros = [test_api(endpoint, key, client) for endpoint, key in var_to_test.values()]
+        results_raw = await asyncio.gather(*coros, return_exceptions=True)
 
-    results = []
-    for var_name, task in tasks:
-        endpoint, success, msg = await task
-        results.append((var_name, endpoint, success, msg))
+    # Normalize results, handling unexpected exceptions
+    results: list[tuple[str, str, bool, str]] = []
+    for var_name, res in zip(names, results_raw):
+        if isinstance(res, Exception):
+            results.append((var_name, "unknown", False, str(res)[:30]))
+        else:
+            endpoint, success, msg = res
+            results.append((var_name, endpoint, success, msg))
 
     return results
 
@@ -746,34 +753,37 @@ def configure_skill_interactive(skill_config: SkillConfig, all_config: dict[str,
 
         default_hint = f" [{var.default}]" if var.default else ""
 
-        try:
-            if var.secret:
-                value = Prompt.ask(f"  Enter value{default_hint}", password=True, default="")
-            else:
-                value = Prompt.ask(f"  Enter value{default_hint}", default=var.default or "")
-        except KeyboardInterrupt:
-            console.print("\n[yellow]Cancelled[/]")
-            return
+        # Inner loop for retry on validation failure
+        while True:
+            try:
+                if var.secret:
+                    value = Prompt.ask(f"  Enter value{default_hint}", password=True, default="")
+                else:
+                    value = Prompt.ask(f"  Enter value{default_hint}", default=var.default or "")
+            except KeyboardInterrupt:
+                console.print("\n[yellow]Cancelled[/]")
+                return
 
-        value = value.strip()
+            value = value.strip()
 
-        if not value:
-            if var.default:
-                value = var.default
-            else:
-                continue
+            if not value:
+                if var.default:
+                    value = var.default
+                else:
+                    break  # Skip this variable
 
-        # Validate
-        if var.validator:
-            is_valid, msg = var.validator(value)
-            if not is_valid:
-                console.print(f"  [red]✗ {msg}[/]")
-                if not Confirm.ask("  Try again?", default=True):
-                    continue
-                continue
-            console.print(f"  [green]✓ {msg}[/]")
+            # Validate
+            if var.validator:
+                is_valid, msg = var.validator(value)
+                if not is_valid:
+                    console.print(f"  [red]✗ {msg}[/]")
+                    if Confirm.ask("  Try again?", default=True):
+                        continue  # Re-prompt for same variable
+                    break  # Skip this variable
+                console.print(f"  [green]✓ {msg}[/]")
 
-        new_env[var.name] = value
+            new_env[var.name] = value
+            break  # Successfully validated, move to next variable
 
     # Save
     if new_env != current_env:

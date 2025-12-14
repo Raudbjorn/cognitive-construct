@@ -703,7 +703,14 @@ def show_test_results():
     ) as progress:
         task = progress.add_task("Testing APIs...", total=100)
 
-        results = asyncio.run(run_all_tests(all_config, detected))
+        try:
+            results = asyncio.run(run_all_tests(all_config, detected))
+        except RuntimeError as e:
+            if "running event loop" in str(e).lower():
+                console.print("\n[red]Error: Cannot run in existing event loop (IDE/notebook).[/]")
+                console.print("[dim]Run from terminal: uv run scripts/setup.py --test[/]")
+                return
+            raise
         progress.update(task, completed=100)
 
     if not results:

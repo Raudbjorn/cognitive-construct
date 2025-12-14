@@ -2,7 +2,7 @@
 
 > "This is your gut feeling. The raw data of the soul. When logic fails, consult the Empire."
 
-A unified memory substrate for Claude skills. Store facts, patterns, and context across multiple backends with a single CLI interface.
+A unified memory substrate for Claude skills. Store facts, patterns, and context across multiple backends with a single CLI.
 
 ## Quick Start
 
@@ -32,7 +32,7 @@ Inland Empire unifies three memory backends behind sanitized aliases:
 | `pattern_memory` | openmemory | Hosted API or Postgres | Learned patterns, preferences |
 | `context_memory` | JSONL file | Local session file | Session context, transient notes |
 
-```
+```text
 ┌─────────────────────────────────────────────────────────┐
 │                    inland_empire.py                      │
 │                    (Unified CLI)                         │
@@ -199,7 +199,7 @@ python3 inland-empire/scripts/inland_empire.py stats
 
 ## Directory Structure
 
-```
+```text
 inland-empire/
 ├── scripts/
 │   └── inland_empire.py  # Main CLI entrypoint

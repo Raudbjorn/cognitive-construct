@@ -72,7 +72,7 @@ USE_LEARNING_HISTORY=true  # Enable vibe-check learning history
 
 ## Directory Structure
 
-```
+```text
 rhetoric/
 ├── scripts/
 │   └── rhetoric.py          # Main CLI entrypoint

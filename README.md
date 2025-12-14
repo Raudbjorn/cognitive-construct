@@ -27,7 +27,7 @@ uv run scripts/setup.py --test
 
 ## Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────────────┐
 │                    Claude Code                          │
 │                  (Orchestrator)                         │

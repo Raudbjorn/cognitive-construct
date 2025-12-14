@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["rich>=13.0", "httpx>=0.27"]
+# ///
 """
 Cognitive Construct Configuration Setup
 
-Interactive tool for configuring all four skills:
-- Encyclopedia (knowledge retrieval)
-- Inland Empire (memory)
-- Rhetoric (reasoning)
-- Volition (agency)
+Beautiful TUI for configuring all four skills with auto-detection and API testing.
 
 Usage:
-    python scripts/setup.py              # Interactive setup
-    python scripts/setup.py --status     # Show configuration status
-    python scripts/setup.py --export     # Export as shell commands
-    python scripts/setup.py --validate   # Validate existing configuration
+    uv run scripts/setup.py              # First-run wizard / interactive setup
+    uv run scripts/setup.py --status     # Show configuration status
+    uv run scripts/setup.py --test       # Test API connectivity
+    uv run scripts/setup.py --export     # Export as shell commands
 """
 
 from __future__ import annotations
@@ -20,16 +20,40 @@ from __future__ import annotations
 import os
 import re
 import sys
-import json
-import subprocess
+import time
+import asyncio
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Callable
 from enum import Enum
 
+# Rich imports
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.prompt import Prompt, Confirm
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
+from rich.live import Live
+from rich.layout import Layout
+from rich.text import Text
+from rich.style import Style
+from rich.box import ROUNDED, DOUBLE
+from rich import print as rprint
+
+import httpx
+
 # Constants
 CONSTRUCT_ROOT = Path(__file__).parent.parent
 SKILLS = ["encyclopedia", "inland-empire", "rhetoric", "volition"]
+console = Console()
+
+# Skill icons
+SKILL_ICONS = {
+    "encyclopedia": "📚",
+    "inland-empire": "🧠",
+    "rhetoric": "💭",
+    "volition": "⚡",
+}
 
 
 class Requirement(Enum):
@@ -49,6 +73,7 @@ class ConfigVar:
     validator: Callable[[str], tuple[bool, str]] | None = None
     secret: bool = True
     group: str = ""
+    test_endpoint: str = ""  # For connectivity testing
 
 
 @dataclass
@@ -57,12 +82,16 @@ class SkillConfig:
     name: str
     display_name: str
     description: str
+    icon: str = ""
     variables: list[ConfigVar] = field(default_factory=list)
-    min_required: int = 0  # Minimum number of required vars that must be set
-    required_groups: list[str] = field(default_factory=list)  # At least one from each group
+    min_required: int = 0
+    required_groups: list[str] = field(default_factory=list)
 
 
+# ============================================================================
 # Validators
+# ============================================================================
+
 def validate_api_key_format(prefix: str) -> Callable[[str], tuple[bool, str]]:
     """Create validator for API key with expected prefix."""
     def validator(value: str) -> tuple[bool, str]:
@@ -77,44 +106,28 @@ def validate_api_key_format(prefix: str) -> Callable[[str], tuple[bool, str]]:
 
 
 def validate_url(value: str) -> tuple[bool, str]:
-    """Validate URL format."""
     if not value:
         return False, "Value cannot be empty"
     if not re.match(r'^https?://', value):
         return False, "URL must start with http:// or https://"
-    return True, "Valid URL format"
-
-
-def validate_postgres_url(value: str) -> tuple[bool, str]:
-    """Validate PostgreSQL URL format."""
-    if not value:
-        return False, "Value cannot be empty"
-    if not re.match(r'^postgresql://', value):
-        return False, "URL must start with postgresql://"
-    return True, "Valid PostgreSQL URL"
-
-
-def validate_bolt_url(value: str) -> tuple[bool, str]:
-    """Validate Neo4j Bolt URL format."""
-    if not value:
-        return False, "Value cannot be empty"
-    if not re.match(r'^bolt://', value):
-        return False, "URL must start with bolt://"
-    return True, "Valid Bolt URL"
+    return True, "Valid URL"
 
 
 def validate_nonempty(value: str) -> tuple[bool, str]:
-    """Validate non-empty value."""
     if not value or not value.strip():
         return False, "Value cannot be empty"
     return True, "Valid"
 
 
-# Skill configurations
+# ============================================================================
+# Skill Configurations
+# ============================================================================
+
 ENCYCLOPEDIA_CONFIG = SkillConfig(
     name="encyclopedia",
     display_name="Encyclopedia",
     description="Knowledge retrieval from multiple sources",
+    icon="📚",
     required_groups=["search"],
     variables=[
         ConfigVar(
@@ -124,6 +137,7 @@ ENCYCLOPEDIA_CONFIG = SkillConfig(
             url="https://exa.ai/",
             validator=validate_nonempty,
             group="search",
+            test_endpoint="exa",
         ),
         ConfigVar(
             name="PERPLEXITY_API_KEY",
@@ -132,13 +146,14 @@ ENCYCLOPEDIA_CONFIG = SkillConfig(
             url="https://www.perplexity.ai/settings/api",
             validator=validate_nonempty,
             group="search",
+            test_endpoint="perplexity",
         ),
         ConfigVar(
             name="CONTEXT7_API_KEY",
-            description="Context7 - Library docs (works without key, key removes rate limits)",
+            description="Context7 - Library docs (works without key)",
             requirement=Requirement.OPTIONAL,
             url="https://context7.com/",
-            validator=validate_nonempty,
+            # No validator - key is truly optional per description
         ),
         ConfigVar(
             name="KAGI_API_KEY",
@@ -146,39 +161,31 @@ ENCYCLOPEDIA_CONFIG = SkillConfig(
             requirement=Requirement.OPTIONAL,
             url="https://kagi.com/settings?p=api",
             validator=validate_nonempty,
+            test_endpoint="kagi",
         ),
         ConfigVar(
-            name="SEARXNG_URL",
-            description="SearXNG - Self-hosted meta search URL",
+            name="TAVILY_API_KEY",
+            description="Tavily - AI search API",
             requirement=Requirement.OPTIONAL,
-            url="",
-            validator=validate_url,
-            secret=False,
-        ),
-        ConfigVar(
-            name="NEO4J_URI",
-            description="Neo4j URI for code graph queries",
-            requirement=Requirement.OPTIONAL,
-            default="bolt://localhost:7687",
-            validator=validate_bolt_url,
-            secret=False,
-            group="neo4j",
-        ),
-        ConfigVar(
-            name="NEO4J_USERNAME",
-            description="Neo4j username",
-            requirement=Requirement.OPTIONAL,
-            default="neo4j",
+            url="https://tavily.com/",
             validator=validate_nonempty,
-            secret=False,
-            group="neo4j",
+            test_endpoint="tavily",
         ),
         ConfigVar(
-            name="NEO4J_PASSWORD",
-            description="Neo4j password",
+            name="BRAVE_API_KEY",
+            description="Brave Search API",
             requirement=Requirement.OPTIONAL,
+            url="https://brave.com/search/api/",
             validator=validate_nonempty,
-            group="neo4j",
+            test_endpoint="brave",
+        ),
+        ConfigVar(
+            name="SERPER_API_KEY",
+            description="Serper - Google Search API",
+            requirement=Requirement.OPTIONAL,
+            url="https://serper.dev/",
+            validator=validate_nonempty,
+            test_endpoint="serper",
         ),
     ],
 )
@@ -186,8 +193,17 @@ ENCYCLOPEDIA_CONFIG = SkillConfig(
 INLAND_EMPIRE_CONFIG = SkillConfig(
     name="inland-empire",
     display_name="Inland Empire",
-    description="Memory substrate (works with local storage by default)",
+    description="Memory substrate (works with local storage)",
+    icon="🧠",
     variables=[
+        ConfigVar(
+            name="MEM0_API_KEY",
+            description="Mem0 API for pattern memory",
+            requirement=Requirement.OPTIONAL,
+            url="https://app.mem0.ai/",
+            validator=validate_nonempty,
+            test_endpoint="mem0",
+        ),
         ConfigVar(
             name="LIBSQL_URL",
             description="LibSQL/Turso URL for fact memory",
@@ -199,30 +215,16 @@ INLAND_EMPIRE_CONFIG = SkillConfig(
         ),
         ConfigVar(
             name="LIBSQL_AUTH_TOKEN",
-            description="LibSQL/Turso auth token (for remote)",
+            description="LibSQL/Turso auth token",
             requirement=Requirement.OPTIONAL,
             validator=validate_nonempty,
         ),
         ConfigVar(
-            name="MEM0_API_KEY",
-            description="Mem0 API for pattern memory",
+            name="QDRANT_API_KEY",
+            description="Qdrant vector database",
             requirement=Requirement.OPTIONAL,
-            url="https://app.mem0.ai/",
+            url="https://qdrant.tech/",
             validator=validate_nonempty,
-        ),
-        ConfigVar(
-            name="POSTGRES_URL",
-            description="PostgreSQL URL for self-hosted Mem0",
-            requirement=Requirement.OPTIONAL,
-            validator=validate_postgres_url,
-        ),
-        ConfigVar(
-            name="INLAND_EMPIRE_STATE_DIR",
-            description="State directory for memory files",
-            requirement=Requirement.OPTIONAL,
-            default="~/.inland-empire",
-            validator=validate_nonempty,
-            secret=False,
         ),
     ],
 )
@@ -230,7 +232,8 @@ INLAND_EMPIRE_CONFIG = SkillConfig(
 RHETORIC_CONFIG = SkillConfig(
     name="rhetoric",
     display_name="Rhetoric",
-    description="Reasoning engine (needs 2+ LLM keys for deliberation)",
+    description="Reasoning engine (needs 2+ LLM keys)",
+    icon="💭",
     min_required=2,
     required_groups=["llm"],
     variables=[
@@ -241,6 +244,7 @@ RHETORIC_CONFIG = SkillConfig(
             url="https://platform.openai.com/api-keys",
             validator=validate_api_key_format("sk-"),
             group="llm",
+            test_endpoint="openai",
         ),
         ConfigVar(
             name="ANTHROPIC_API_KEY",
@@ -249,46 +253,56 @@ RHETORIC_CONFIG = SkillConfig(
             url="https://console.anthropic.com/settings/keys",
             validator=validate_api_key_format("sk-ant-"),
             group="llm",
+            test_endpoint="anthropic",
         ),
         ConfigVar(
             name="OPENROUTER_API_KEY",
-            description="OpenRouter API (access to many models)",
+            description="OpenRouter (access to many models)",
             requirement=Requirement.RECOMMENDED,
             url="https://openrouter.ai/keys",
             validator=validate_api_key_format("sk-or-"),
             group="llm",
+            test_endpoint="openrouter",
         ),
         ConfigVar(
             name="GOOGLE_CLOUD_API_KEY",
             description="Google Cloud / Gemini API",
             requirement=Requirement.OPTIONAL,
-            url="https://console.cloud.google.com/apis/credentials",
+            url="https://aistudio.google.com/apikey",
             validator=validate_api_key_format("AIza"),
             group="llm",
+            test_endpoint="google",
         ),
         ConfigVar(
-            name="OLLAMA_URL",
-            description="Ollama local server URL",
+            name="MISTRAL_API_KEY",
+            description="Mistral AI",
             requirement=Requirement.OPTIONAL,
-            url="https://ollama.ai",
-            default="http://localhost:11434",
-            validator=validate_url,
-            secret=False,
-            group="llm_local",
+            url="https://console.mistral.ai/api-keys",
+            validator=validate_nonempty,
+            group="llm",
+            test_endpoint="mistral",
         ),
         ConfigVar(
-            name="LMSTUDIO_URL",
-            description="LM Studio local server URL",
+            name="XAI_API_KEY",
+            description="xAI / Grok API",
             requirement=Requirement.OPTIONAL,
-            url="https://lmstudio.ai",
-            default="http://localhost:1234",
-            validator=validate_url,
-            secret=False,
-            group="llm_local",
+            url="https://console.x.ai/",
+            validator=validate_nonempty,
+            group="llm",
+            test_endpoint="xai",
+        ),
+        ConfigVar(
+            name="TOGETHER_API_KEY",
+            description="Together AI",
+            requirement=Requirement.OPTIONAL,
+            url="https://api.together.xyz/",
+            validator=validate_nonempty,
+            group="llm",
+            test_endpoint="together",
         ),
         ConfigVar(
             name="DEFAULT_LLM_PROVIDER",
-            description="Default LLM provider for VibeCheck",
+            description="Default provider (gemini/openai/anthropic)",
             requirement=Requirement.OPTIONAL,
             default="gemini",
             validator=validate_nonempty,
@@ -300,7 +314,8 @@ RHETORIC_CONFIG = SkillConfig(
 VOLITION_CONFIG = SkillConfig(
     name="volition",
     display_name="Volition",
-    description="Agency and execution (needs at least 1 LLM key)",
+    description="Agency and execution (needs 1+ LLM key)",
+    icon="⚡",
     min_required=1,
     required_groups=["llm"],
     variables=[
@@ -311,6 +326,7 @@ VOLITION_CONFIG = SkillConfig(
             url="https://platform.openai.com/api-keys",
             validator=validate_api_key_format("sk-"),
             group="llm",
+            test_endpoint="openai",
         ),
         ConfigVar(
             name="ANTHROPIC_API_KEY",
@@ -319,21 +335,24 @@ VOLITION_CONFIG = SkillConfig(
             url="https://console.anthropic.com/settings/keys",
             validator=validate_api_key_format("sk-ant-"),
             group="llm",
+            test_endpoint="anthropic",
         ),
         ConfigVar(
             name="DEEPSEEK_API_KEY",
-            description="DeepSeek API (code-specialized)",
+            description="DeepSeek (code-specialized)",
             requirement=Requirement.OPTIONAL,
             url="https://platform.deepseek.com/",
             validator=validate_nonempty,
             group="llm",
+            test_endpoint="deepseek",
         ),
         ConfigVar(
             name="SHODAN_API_KEY",
-            description="Shodan API for security reconnaissance",
+            description="Shodan security reconnaissance",
             requirement=Requirement.OPTIONAL,
             url="https://account.shodan.io/",
             validator=validate_nonempty,
+            test_endpoint="shodan",
         ),
     ],
 )
@@ -341,65 +360,15 @@ VOLITION_CONFIG = SkillConfig(
 ALL_CONFIGS = [ENCYCLOPEDIA_CONFIG, INLAND_EMPIRE_CONFIG, RHETORIC_CONFIG, VOLITION_CONFIG]
 
 
-class Colors:
-    """ANSI color codes."""
-    RESET = "\033[0m"
-    BOLD = "\033[1m"
-    DIM = "\033[2m"
-    RED = "\033[31m"
-    GREEN = "\033[32m"
-    YELLOW = "\033[33m"
-    BLUE = "\033[34m"
-    MAGENTA = "\033[35m"
-    CYAN = "\033[36m"
-
-    @classmethod
-    def disable(cls):
-        for attr in dir(cls):
-            if not attr.startswith("_") and attr != "disable":
-                setattr(cls, attr, "")
-
-
-# Disable colors if not a TTY
-if not sys.stdout.isatty():
-    Colors.disable()
-
-
-def print_header(text: str):
-    """Print a section header."""
-    print(f"\n{Colors.BOLD}{Colors.CYAN}{'=' * 60}{Colors.RESET}")
-    print(f"{Colors.BOLD}{Colors.CYAN}{text:^60}{Colors.RESET}")
-    print(f"{Colors.BOLD}{Colors.CYAN}{'=' * 60}{Colors.RESET}\n")
-
-
-def print_subheader(text: str):
-    """Print a subsection header."""
-    print(f"\n{Colors.BOLD}{text}{Colors.RESET}")
-    print(f"{Colors.DIM}{'-' * len(text)}{Colors.RESET}")
-
-
-def print_success(text: str):
-    print(f"{Colors.GREEN}✓{Colors.RESET} {text}")
-
-
-def print_warning(text: str):
-    print(f"{Colors.YELLOW}⚠{Colors.RESET} {text}")
-
-
-def print_error(text: str):
-    print(f"{Colors.RED}✗{Colors.RESET} {text}")
-
-
-def print_info(text: str):
-    print(f"{Colors.BLUE}ℹ{Colors.RESET} {text}")
-
+# ============================================================================
+# Environment Detection & Loading
+# ============================================================================
 
 def load_env_file(path: Path) -> dict[str, str]:
     """Load environment variables from a .env file."""
     env = {}
     if not path.exists():
         return env
-
     with open(path) as f:
         for line in f:
             line = line.strip()
@@ -414,49 +383,95 @@ def load_env_file(path: Path) -> dict[str, str]:
     return env
 
 
-def save_env_file(path: Path, env: dict[str, str], comments: dict[str, str] | None = None):
-    """Save environment variables to a .env file."""
+def escape_env_value(value: str) -> str:
+    """Escape special characters in env value for .env file format."""
+    # Escape backslashes first, then quotes, then newlines
+    value = value.replace("\\", "\\\\")
+    value = value.replace('"', '\\"')
+    value = value.replace("\n", "\\n")
+    return value
+
+
+def save_env_file(path: Path, env: dict[str, str], skill_name: str):
+    """Save environment variables to a .env file with nice formatting."""
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    lines = []
-    if comments:
-        for key, comment in comments.items():
-            if key in env:
-                lines.append(f"# {comment}")
-                lines.append(f"{key}={env[key]}")
-                lines.append("")
+    header = "# {} Skill Configuration".format(skill_name.replace("-", " ").title())
+    lines = [
+        header,
+        "# Generated by Cognitive Construct Setup",
+        "",
+    ]
 
-    # Add any remaining vars not in comments
-    for key, value in env.items():
-        if comments and key in comments:
-            continue
-        lines.append(f"{key}={value}")
+    for key, value in sorted(env.items()):
+        escaped = escape_env_value(value)
+        lines.append('{}="{}"'.format(key, escaped))
 
     with open(path, "w") as f:
-        f.write("\n".join(lines))
+        f.write("\n".join(lines) + "\n")
 
 
 def get_skill_env_path(skill_name: str) -> Path:
-    """Get the .env.local path for a skill."""
     return CONSTRUCT_ROOT / skill_name / ".env.local"
 
 
 def load_all_config() -> dict[str, dict[str, str]]:
-    """Load configuration from all skill .env.local files."""
-    config = {}
+    """Load configuration from all sources."""
+    config = {skill: {} for skill in SKILLS}
+
+    # Load from skill .env.local files
     for skill in SKILLS:
         env_path = get_skill_env_path(skill)
         config[skill] = load_env_file(env_path)
+
     return config
 
 
-def get_current_value(var_name: str, all_config: dict[str, dict[str, str]]) -> str | None:
-    """Get current value for a variable, checking env vars and .env.local files."""
-    # First check environment
+def auto_detect_env_vars() -> dict[str, str]:
+    """Auto-detect environment variables from various sources."""
+    detected = {}
+
+    # 1. Current environment
+    all_var_names = set()
+    for skill_config in ALL_CONFIGS:
+        for var in skill_config.variables:
+            all_var_names.add(var.name)
+
+    for name in all_var_names:
+        if name in os.environ:
+            detected[name] = os.environ[name]
+
+    # 2. Common .env file locations
+    search_paths = [
+        Path.home() / ".env",
+        Path.home() / ".env.local",
+        Path.cwd() / ".env",
+        Path.cwd() / ".env.local",
+        CONSTRUCT_ROOT / ".env",
+        CONSTRUCT_ROOT / ".env.local",
+    ]
+
+    for path in search_paths:
+        if path.exists():
+            env = load_env_file(path)
+            for name in all_var_names:
+                if name in env and name not in detected:
+                    detected[name] = env[name]
+
+    return detected
+
+
+def get_current_value(var_name: str, all_config: dict[str, dict[str, str]], detected: dict[str, str] | None = None) -> str | None:
+    """Get current value for a variable from all sources."""
+    # Check detected first
+    if detected and var_name in detected:
+        return detected[var_name]
+
+    # Check environment
     if var_name in os.environ:
         return os.environ[var_name]
 
-    # Then check all skill configs (many vars are shared)
+    # Check skill configs
     for skill_config in all_config.values():
         if var_name in skill_config:
             return skill_config[var_name]
@@ -464,17 +479,128 @@ def get_current_value(var_name: str, all_config: dict[str, dict[str, str]]) -> s
     return None
 
 
-def check_skill_status(skill_config: SkillConfig, all_config: dict[str, dict[str, str]]) -> tuple[bool, list[str], list[str]]:
-    """
-    Check if a skill is properly configured.
-    Returns (is_ready, configured_vars, missing_required_vars)
-    """
+# ============================================================================
+# API Connectivity Testing
+# ============================================================================
+
+def get_api_test_config(name: str, key: str) -> tuple[str, dict[str, str], str, dict | None] | None:
+    """Get test configuration for an API. Returns (url, headers, method, body) or None."""
+    tests = {
+        "openai": ("https://api.openai.com/v1/models", {"Authorization": f"Bearer {key}"}, "GET", None),
+        "anthropic": ("https://api.anthropic.com/v1/models", {"x-api-key": key, "anthropic-version": "2023-06-01"}, "GET", None),
+        "openrouter": ("https://openrouter.ai/api/v1/models", {"Authorization": f"Bearer {key}"}, "GET", None),
+        "google": (f"https://generativelanguage.googleapis.com/v1/models?key={key}", {}, "GET", None),
+        "mistral": ("https://api.mistral.ai/v1/models", {"Authorization": f"Bearer {key}"}, "GET", None),
+        "deepseek": ("https://api.deepseek.com/models", {"Authorization": f"Bearer {key}"}, "GET", None),
+        "together": ("https://api.together.xyz/v1/models", {"Authorization": f"Bearer {key}"}, "GET", None),
+        "xai": ("https://api.x.ai/v1/models", {"Authorization": f"Bearer {key}"}, "GET", None),
+        # Note: Exa API requires camelCase "numResults" per their API spec
+        "exa": ("https://api.exa.ai/search", {"x-api-key": key, "Content-Type": "application/json"}, "POST", {"query": "test", "numResults": 1}),
+        "perplexity": ("https://api.perplexity.ai/chat/completions", {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}, "POST", {"model": "sonar", "messages": [{"role": "user", "content": "hi"}], "max_tokens": 1}),
+        "kagi": ("https://kagi.com/api/v0/enrich/web?q=test", {"Authorization": f"Bot {key}"}, "GET", None),
+        "tavily": ("https://api.tavily.com/search", {"Content-Type": "application/json"}, "POST", {"api_key": key, "query": "test", "max_results": 1}),
+        "brave": ("https://api.search.brave.com/res/v1/web/search?q=test", {"X-Subscription-Token": key}, "GET", None),
+        "serper": ("https://google.serper.dev/search", {"X-API-KEY": key, "Content-Type": "application/json"}, "POST", {"q": "test"}),
+        "mem0": ("https://api.mem0.ai/v1/memories/?user_id=test", {"Authorization": f"Token {key}"}, "GET", None),
+        "shodan": (f"https://api.shodan.io/api-info?key={key}", {}, "GET", None),
+    }
+    return tests.get(name)
+
+
+async def test_api(name: str, key: str, client: httpx.AsyncClient) -> tuple[str, bool, str]:
+    """Test API connectivity using shared client. Returns (name, success, message)."""
+    config = get_api_test_config(name, key)
+    if config is None:
+        return name, False, "No test available"
+
+    url, headers, method, body = config
+
+    try:
+        if method == "GET":
+            resp = await client.get(url, headers=headers)
+        else:
+            resp = await client.post(url, headers=headers, json=body)
+
+        if resp.status_code in (200, 201):
+            return name, True, "Connected"
+        elif resp.status_code == 401:
+            return name, False, "Invalid key"
+        elif resp.status_code == 403:
+            # Check for xAI-specific "no credits" error
+            if name == "xai":
+                try:
+                    data = resp.json()
+                    error_msg = data.get("error")
+                    if isinstance(error_msg, str) and "credits" in error_msg.lower():
+                        return name, True, "No credits"
+                except ValueError:
+                    pass  # JSON parsing failed
+            return name, False, "Access denied"
+        elif resp.status_code == 429:
+            return name, True, "Rate limited (key valid)"
+        else:
+            # Check for Kagi-specific "insufficient credit" error
+            if name == "kagi" and resp.status_code == 400:
+                try:
+                    data = resp.json()
+                    errors = data.get("error")
+                    if isinstance(errors, list) and any(
+                        isinstance(e, dict) and e.get("code") == 101 for e in errors
+                    ):
+                        return name, True, "No credits"
+                except ValueError:
+                    pass  # JSON parsing failed
+            return name, False, "HTTP {}".format(resp.status_code)
+    except httpx.TimeoutException:
+        return name, False, "Timeout"
+    except httpx.RequestError:
+        return name, False, "Network error"
+    except Exception:
+        return name, False, "Unexpected error"
+
+
+async def run_all_tests(all_config: dict[str, dict[str, str]], detected: dict[str, str]) -> list[tuple[str, str, bool, str]]:
+    """Run all API tests concurrently using a shared client."""
+    var_to_test: dict[str, tuple[str, str]] = {}
+
+    # Collect all variables that have test endpoints and values
+    for skill_config in ALL_CONFIGS:
+        for var in skill_config.variables:
+            if var.test_endpoint and var.name not in var_to_test:
+                value = get_current_value(var.name, all_config, detected)
+                if value:
+                    var_to_test[var.name] = (var.test_endpoint, value)
+
+    # Run all tests concurrently with shared client
+    async with httpx.AsyncClient(timeout=10) as client:
+        names = list(var_to_test.keys())
+        coros = [test_api(endpoint, key, client) for endpoint, key in var_to_test.values()]
+        results_raw = await asyncio.gather(*coros, return_exceptions=True)
+
+    # Normalize results, handling unexpected exceptions
+    results: list[tuple[str, str, bool, str]] = []
+    for var_name, res in zip(names, results_raw):
+        if isinstance(res, Exception):
+            results.append((var_name, "unknown", False, str(res)[:30]))
+        else:
+            endpoint, success, msg = res
+            results.append((var_name, endpoint, success, msg))
+
+    return results
+
+
+# ============================================================================
+# Status Display
+# ============================================================================
+
+def check_skill_status(skill_config: SkillConfig, all_config: dict[str, dict[str, str]], detected: dict[str, str] | None = None) -> tuple[bool, list[str], list[str]]:
+    """Check if a skill is properly configured."""
     configured = []
     missing = []
     group_coverage = {}
 
     for var in skill_config.variables:
-        value = get_current_value(var.name, all_config)
+        value = get_current_value(var.name, all_config, detected)
         if value:
             configured.append(var.name)
             if var.group:
@@ -482,21 +608,18 @@ def check_skill_status(skill_config: SkillConfig, all_config: dict[str, dict[str
         elif var.requirement == Requirement.REQUIRED:
             missing.append(var.name)
 
-    # Check required groups
     for group in skill_config.required_groups:
         if group not in group_coverage:
-            # Find a var in this group to suggest
             for var in skill_config.variables:
                 if var.group == group:
                     if var.name not in missing:
                         missing.append(f"(one of {group} group)")
                     break
 
-    # Check minimum required
     is_ready = len(missing) == 0
     if skill_config.min_required > 0:
         llm_count = sum(1 for var in skill_config.variables
-                       if var.group == "llm" and get_current_value(var.name, all_config))
+                       if var.group == "llm" and get_current_value(var.name, all_config, detected))
         if llm_count < skill_config.min_required:
             is_ready = False
             if not any("llm" in m for m in missing):
@@ -505,293 +628,365 @@ def check_skill_status(skill_config: SkillConfig, all_config: dict[str, dict[str
     return is_ready, configured, missing
 
 
+def create_status_table(all_config: dict[str, dict[str, str]], detected: dict[str, str] | None = None) -> Table:
+    """Create a rich table showing configuration status."""
+    table = Table(title="🧠 Cognitive Construct Status", box=ROUNDED, show_header=True, header_style="bold cyan")
+    table.add_column("Skill", style="bold")
+    table.add_column("Status", justify="center")
+    table.add_column("Configured", style="green")
+    table.add_column("Missing", style="yellow")
+
+    for skill_config in ALL_CONFIGS:
+        is_ready, configured, missing = check_skill_status(skill_config, all_config, detected)
+
+        status = "[green]✓ Ready[/]" if is_ready else "[yellow]○ Setup needed[/]"
+        icon = SKILL_ICONS.get(skill_config.name, "")
+
+        configured_str = ", ".join(configured[:3])
+        if len(configured) > 3:
+            configured_str += f" +{len(configured) - 3}"
+
+        missing_str = ", ".join(missing[:2])
+        if len(missing) > 2:
+            missing_str += f" +{len(missing) - 2}"
+
+        table.add_row(
+            f"{icon} {skill_config.display_name}",
+            status,
+            configured_str or "-",
+            missing_str or "-",
+        )
+
+    return table
+
+
 def show_status():
-    """Display current configuration status for all skills."""
-    print_header("Cognitive Construct Configuration Status")
+    """Display current configuration status."""
+    console.print()
+    console.print(Panel.fit(
+        "[bold cyan]Cognitive Construct[/] Configuration Status",
+        border_style="cyan",
+    ))
 
     all_config = load_all_config()
+    detected = auto_detect_env_vars()
 
-    for skill_config in ALL_CONFIGS:
-        is_ready, configured, missing = check_skill_status(skill_config, all_config)
+    if detected:
+        console.print(f"\n[dim]Auto-detected {len(detected)} environment variable(s)[/]")
 
-        status_icon = f"{Colors.GREEN}✓{Colors.RESET}" if is_ready else f"{Colors.YELLOW}○{Colors.RESET}"
-        print(f"\n{status_icon} {Colors.BOLD}{skill_config.display_name}{Colors.RESET} - {skill_config.description}")
-
-        if configured:
-            print(f"  {Colors.GREEN}Configured:{Colors.RESET} {', '.join(configured)}")
-        if missing:
-            print(f"  {Colors.YELLOW}Missing:{Colors.RESET} {', '.join(missing)}")
-        if not configured and not missing:
-            print(f"  {Colors.DIM}No configuration required (uses local defaults){Colors.RESET}")
-
-    print()
+    console.print()
+    console.print(create_status_table(all_config, detected))
+    console.print()
 
 
-def validate_config():
-    """Validate all existing configuration."""
-    print_header("Validating Configuration")
+# ============================================================================
+# Connectivity Test Display
+# ============================================================================
 
-    all_config = load_all_config()
-    errors = []
-    warnings = []
-
-    for skill_config in ALL_CONFIGS:
-        print_subheader(skill_config.display_name)
-
-        for var in skill_config.variables:
-            value = get_current_value(var.name, all_config)
-            if not value:
-                if var.requirement == Requirement.REQUIRED:
-                    print_error(f"{var.name}: Not set (required)")
-                    errors.append(f"{skill_config.name}: {var.name} not set")
-                continue
-
-            if var.validator:
-                is_valid, msg = var.validator(value)
-                if is_valid:
-                    print_success(f"{var.name}: {msg}")
-                else:
-                    print_error(f"{var.name}: {msg}")
-                    errors.append(f"{skill_config.name}: {var.name} - {msg}")
-            else:
-                print_success(f"{var.name}: Set")
-
-    print()
-    if errors:
-        print_error(f"Found {len(errors)} validation error(s)")
-        return False
-    else:
-        print_success("All configured values are valid")
-        return True
-
-
-def export_shell():
-    """Export configuration as shell commands."""
-    print_header("Shell Export Commands")
+def show_test_results():
+    """Test and display API connectivity."""
+    console.print()
+    console.print(Panel.fit(
+        "[bold cyan]🔌 API Connectivity Test[/]",
+        border_style="cyan",
+    ))
 
     all_config = load_all_config()
-    exported = set()
+    detected = auto_detect_env_vars()
 
-    print("# Add these to your shell profile (~/.bashrc, ~/.zshrc, etc.)")
-    print("# Or run: eval $(python scripts/setup.py --export)")
-    print()
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Testing APIs...", total=100)
 
-    for skill_config in ALL_CONFIGS:
-        print(f"# {skill_config.display_name}")
-        for var in skill_config.variables:
-            if var.name in exported:
-                continue
-            value = get_current_value(var.name, all_config)
-            if value:
-                # Escape special characters for shell
-                escaped = value.replace("'", "'\"'\"'")
-                print(f"export {var.name}='{escaped}'")
-                exported.add(var.name)
-        print()
+        try:
+            results = asyncio.run(run_all_tests(all_config, detected))
+        except RuntimeError as e:
+            if "running event loop" in str(e).lower():
+                console.print("\n[red]Error: Cannot run in existing event loop (IDE/notebook).[/]")
+                console.print("[dim]Run from terminal: uv run scripts/setup.py --test[/]")
+                return
+            raise
+        progress.update(task, completed=100)
 
+    if not results:
+        console.print("\n[yellow]No API keys configured to test[/]")
+        return
 
-def prompt_value(var: ConfigVar, current: str | None) -> str | None:
-    """Prompt user for a configuration value."""
-    req_label = {
-        Requirement.REQUIRED: f"{Colors.RED}required{Colors.RESET}",
-        Requirement.RECOMMENDED: f"{Colors.YELLOW}recommended{Colors.RESET}",
-        Requirement.OPTIONAL: f"{Colors.DIM}optional{Colors.RESET}",
-    }[var.requirement]
+    table = Table(title="API Test Results", box=ROUNDED)
+    table.add_column("Variable", style="bold")
+    table.add_column("API", style="cyan")
+    table.add_column("Status", justify="center")
+    table.add_column("Message")
 
-    print(f"\n{Colors.BOLD}{var.name}{Colors.RESET} [{req_label}]")
-    print(f"  {var.description}")
-    if var.url:
-        print(f"  {Colors.BLUE}Get key at: {var.url}{Colors.RESET}")
+    for var_name, endpoint, success, msg in sorted(results):
+        status = "[green]✓[/]" if success else "[red]✗[/]"
+        msg_text = msg if success else f"[red]{msg}[/]"
+        table.add_row(var_name, endpoint, status, msg_text)
 
-    if current:
-        masked = current[:4] + "..." + current[-4:] if var.secret and len(current) > 12 else current
-        print(f"  {Colors.GREEN}Current: {masked}{Colors.RESET}")
+    console.print()
+    console.print(table)
 
-    default_prompt = f" [{var.default}]" if var.default else ""
-    prompt_text = f"  Enter value{default_prompt} (or 'skip'): "
-
-    try:
-        if var.secret:
-            import getpass
-            value = getpass.getpass(prompt_text)
-        else:
-            value = input(prompt_text)
-    except (EOFError, KeyboardInterrupt):
-        print()
-        return None
-
-    value = value.strip()
-
-    if value.lower() == "skip" or value == "":
-        if var.default and value == "":
-            return var.default
-        return None
-
-    # Validate
-    if var.validator:
-        is_valid, msg = var.validator(value)
-        if not is_valid:
-            print_error(f"  {msg}")
-            retry = input("  Try again? [Y/n]: ").strip().lower()
-            if retry != "n":
-                return prompt_value(var, current)
-            return None
-        print_success(f"  {msg}")
-
-    return value
+    success_count = sum(1 for _, _, s, _ in results if s)
+    console.print(f"\n[{'green' if success_count == len(results) else 'yellow'}]{success_count}/{len(results)} APIs connected successfully[/]")
 
 
-def configure_skill(skill_config: SkillConfig, all_config: dict[str, dict[str, str]]):
+# ============================================================================
+# Interactive Setup
+# ============================================================================
+
+def mask_secret(value: str) -> str:
+    """Mask a secret value for display."""
+    if len(value) <= 8:
+        return "****"
+    return value[:4] + "..." + value[-4:]
+
+
+def configure_skill_interactive(skill_config: SkillConfig, all_config: dict[str, dict[str, str]], detected: dict[str, str]):
     """Interactively configure a single skill."""
-    print_subheader(f"Configuring {skill_config.display_name}")
-    print(f"{Colors.DIM}{skill_config.description}{Colors.RESET}")
+    console.print()
+    console.print(Panel(
+        f"[bold]{skill_config.icon} {skill_config.display_name}[/]\n{skill_config.description}",
+        border_style="cyan",
+    ))
 
     env_path = get_skill_env_path(skill_config.name)
-    current_env = all_config.get(skill_config.name, {})
+    current_env = dict(all_config.get(skill_config.name, {}))
     new_env = dict(current_env)
 
     for var in skill_config.variables:
-        current = get_current_value(var.name, all_config)
-        value = prompt_value(var, current)
+        current = get_current_value(var.name, all_config, detected)
 
-        if value is not None:
+        # Build prompt
+        req_badge = {
+            Requirement.REQUIRED: "[red](required)[/]",
+            Requirement.RECOMMENDED: "[yellow](recommended)[/]",
+            Requirement.OPTIONAL: "[dim](optional)[/]",
+        }[var.requirement]
+
+        console.print(f"\n[bold]{var.name}[/] {req_badge}")
+        console.print(f"  [dim]{var.description}[/]")
+        if var.url:
+            console.print(f"  [blue link={var.url}]Get key →[/]")
+
+        if current:
+            display = mask_secret(current) if var.secret else current
+            console.print(f"  [green]Current: {display}[/]")
+
+        default_hint = f" [{var.default}]" if var.default else ""
+
+        # Inner loop for retry on validation failure
+        while True:
+            try:
+                if var.secret:
+                    value = Prompt.ask(f"  Enter value{default_hint}", password=True, default="")
+                else:
+                    value = Prompt.ask(f"  Enter value{default_hint}", default=var.default or "")
+            except KeyboardInterrupt:
+                console.print("\n[yellow]Cancelled[/]")
+                return
+
+            value = value.strip()
+
+            if not value:
+                if var.default:
+                    value = var.default
+                else:
+                    break  # Skip this variable
+
+            # Validate
+            if var.validator:
+                is_valid, msg = var.validator(value)
+                if not is_valid:
+                    console.print(f"  [red]✗ {msg}[/]")
+                    if Confirm.ask("  Try again?", default=True):
+                        continue  # Re-prompt for same variable
+                    break  # Skip this variable
+                console.print(f"  [green]✓ {msg}[/]")
+
             new_env[var.name] = value
-            # Also update all_config so subsequent prompts see it
-            for skill in SKILLS:
-                if skill not in all_config:
-                    all_config[skill] = {}
+            break  # Successfully validated, move to next variable
 
     # Save
     if new_env != current_env:
-        save_env_file(env_path, new_env)
-        print_success(f"Saved to {env_path}")
+        save_env_file(env_path, new_env, skill_config.name)
+        console.print(f"\n[green]✓ Saved to {env_path}[/]")
+        all_config[skill_config.name] = new_env
     else:
-        print_info("No changes made")
+        console.print("\n[dim]No changes made[/]")
 
 
-def interactive_setup():
-    """Run interactive setup for all skills."""
-    print_header("Cognitive Construct Setup")
-    print("This wizard will help you configure all four skills.")
-    print("Press Ctrl+C at any time to exit.\n")
+def first_run_wizard():
+    """First-run wizard with auto-detection."""
+    console.clear()
+    console.print()
+    console.print(Panel.fit(
+        "[bold cyan]🧠 Cognitive Construct Setup Wizard[/]\n\n"
+        "This wizard will help you configure the four cognitive skills:\n"
+        "  📚 Encyclopedia - Knowledge retrieval\n"
+        "  🧠 Inland Empire - Persistent memory\n"
+        "  💭 Rhetoric - Structured reasoning\n"
+        "  ⚡ Volition - Agency and execution",
+        border_style="cyan",
+        box=DOUBLE,
+    ))
 
-    all_config = load_all_config()
+    # Auto-detect
+    console.print("\n[bold]Scanning for existing configuration...[/]")
+    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
+        task = progress.add_task("Detecting environment variables...", total=None)
+        detected = auto_detect_env_vars()
+        all_config = load_all_config()
+        if sys.stdin.isatty():
+            time.sleep(0.5)  # Brief pause for effect in interactive mode
+
+    if detected:
+        console.print(f"\n[green]✓ Found {len(detected)} existing API key(s)![/]")
+
+        table = Table(box=ROUNDED, show_header=False)
+        table.add_column("Variable", style="cyan")
+        table.add_column("Value", style="green")
+
+        for name, value in sorted(detected.items()):
+            table.add_row(name, mask_secret(value))
+
+        console.print(table)
+
+        if Confirm.ask("\n[bold]Import these detected keys?[/]", default=True):
+            # Distribute to appropriate skills (only save if changed)
+            for skill_config in ALL_CONFIGS:
+                original_env = all_config.get(skill_config.name, {})
+                skill_env = dict(original_env)
+                for var in skill_config.variables:
+                    if var.name in detected and var.name not in skill_env:
+                        skill_env[var.name] = detected[var.name]
+                if skill_env != original_env:
+                    save_env_file(get_skill_env_path(skill_config.name), skill_env, skill_config.name)
+                    all_config[skill_config.name] = skill_env
+            console.print("[green]✓ Keys imported![/]")
+            all_config = load_all_config()  # Reload
+    else:
+        console.print("\n[yellow]No existing API keys detected[/]")
 
     # Show current status
-    print_subheader("Current Status")
+    console.print()
+    console.print(create_status_table(all_config, detected))
+
+    # Ask what to configure
+    console.print()
+    skills_needing_setup = []
     for skill_config in ALL_CONFIGS:
-        is_ready, configured, missing = check_skill_status(skill_config, all_config)
-        status = f"{Colors.GREEN}Ready{Colors.RESET}" if is_ready else f"{Colors.YELLOW}Needs setup{Colors.RESET}"
-        print(f"  {skill_config.display_name}: {status}")
+        is_ready, _, _ = check_skill_status(skill_config, all_config, detected)
+        if not is_ready:
+            skills_needing_setup.append(skill_config)
 
-    print()
+    if not skills_needing_setup:
+        console.print("[green]✓ All skills are configured![/]")
+        if Confirm.ask("\nWould you like to test API connectivity?", default=True):
+            show_test_results()
+        return
 
-    # Menu
+    console.print(f"[yellow]{len(skills_needing_setup)} skill(s) need configuration[/]")
+
+    if Confirm.ask("\nConfigure missing skills now?", default=True):
+        for skill_config in skills_needing_setup:
+            configure_skill_interactive(skill_config, all_config, detected)
+            all_config = load_all_config()  # Reload after each
+
+    # Final status
+    console.print()
+    console.print(create_status_table(all_config, detected))
+
+    if Confirm.ask("\nTest API connectivity?", default=True):
+        show_test_results()
+
+    console.print("\n[bold green]Setup complete![/] 🎉")
+    console.print("[dim]Run 'uv run scripts/setup.py --status' anytime to check configuration[/]")
+
+
+def interactive_menu():
+    """Main interactive menu."""
+    all_config = load_all_config()
+    detected = auto_detect_env_vars()
+
     while True:
-        print_subheader("Select a skill to configure")
-        print("  1. Encyclopedia (knowledge retrieval)")
-        print("  2. Inland Empire (memory)")
-        print("  3. Rhetoric (reasoning)")
-        print("  4. Volition (agency)")
-        print("  5. Configure all")
-        print("  6. Show status")
-        print("  7. Validate configuration")
-        print("  8. Export shell commands")
-        print("  9. Exit")
+        console.clear()
+        console.print()
+        console.print(Panel.fit(
+            "[bold cyan]🧠 Cognitive Construct[/] Configuration",
+            border_style="cyan",
+        ))
+        console.print()
+        console.print(create_status_table(all_config, detected))
 
-        try:
-            choice = input(f"\n{Colors.CYAN}Enter choice [1-9]:{Colors.RESET} ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print("\n")
-            break
+        console.print("\n[bold]What would you like to do?[/]\n")
+        console.print("  [cyan]1[/] Configure Encyclopedia (knowledge)")
+        console.print("  [cyan]2[/] Configure Inland Empire (memory)")
+        console.print("  [cyan]3[/] Configure Rhetoric (reasoning)")
+        console.print("  [cyan]4[/] Configure Volition (agency)")
+        console.print("  [cyan]5[/] Configure all skills")
+        console.print("  [cyan]6[/] Test API connectivity")
+        console.print("  [cyan]7[/] Export as shell commands")
+        console.print("  [cyan]8[/] Exit")
+
+        choice = Prompt.ask("\n[cyan]Enter choice[/]", choices=["1", "2", "3", "4", "5", "6", "7", "8"], default="8")
 
         if choice == "1":
-            configure_skill(ENCYCLOPEDIA_CONFIG, all_config)
+            configure_skill_interactive(ENCYCLOPEDIA_CONFIG, all_config, detected)
         elif choice == "2":
-            configure_skill(INLAND_EMPIRE_CONFIG, all_config)
+            configure_skill_interactive(INLAND_EMPIRE_CONFIG, all_config, detected)
         elif choice == "3":
-            configure_skill(RHETORIC_CONFIG, all_config)
+            configure_skill_interactive(RHETORIC_CONFIG, all_config, detected)
         elif choice == "4":
-            configure_skill(VOLITION_CONFIG, all_config)
+            configure_skill_interactive(VOLITION_CONFIG, all_config, detected)
         elif choice == "5":
             for config in ALL_CONFIGS:
-                configure_skill(config, all_config)
+                configure_skill_interactive(config, all_config, detected)
+                all_config = load_all_config()
         elif choice == "6":
-            show_status()
+            show_test_results()
+            Prompt.ask("\nPress Enter to continue")
         elif choice == "7":
-            validate_config()
+            export_shell(all_config, detected)
+            Prompt.ask("\nPress Enter to continue")
         elif choice == "8":
-            export_shell()
-        elif choice == "9":
             break
-        else:
-            print_warning("Invalid choice")
+
+        all_config = load_all_config()
 
 
-def test_api_connectivity():
-    """Test API connectivity for configured services."""
-    print_header("Testing API Connectivity")
+def export_shell(all_config: dict[str, dict[str, str]] | None = None, detected: dict[str, str] | None = None):
+    """Export configuration as shell commands."""
+    if all_config is None:
+        all_config = load_all_config()
+    if detected is None:
+        detected = auto_detect_env_vars()
 
-    all_config = load_all_config()
+    console.print("\n[bold]# Shell Export[/]")
+    console.print("[dim]# Add to ~/.bashrc or ~/.zshrc, or run:[/]")
+    console.print("[dim]# eval $(uv run scripts/setup.py --export 2>/dev/null | grep ^export)[/]\n")
 
-    # Test OpenAI
-    openai_key = get_current_value("OPENAI_API_KEY", all_config)
-    if openai_key:
-        print_info("Testing OpenAI API...")
-        try:
-            import httpx
-            resp = httpx.get(
-                "https://api.openai.com/v1/models",
-                headers={"Authorization": f"Bearer {openai_key}"},
-                timeout=10,
-            )
-            if resp.status_code == 200:
-                print_success("OpenAI API: Connected")
-            else:
-                print_error(f"OpenAI API: Error {resp.status_code}")
-        except Exception as e:
-            print_error(f"OpenAI API: {e}")
+    exported = set()
+    for skill_config in ALL_CONFIGS:
+        console.print(f"# {skill_config.display_name}")
+        for var in skill_config.variables:
+            if var.name in exported:
+                continue
+            value = get_current_value(var.name, all_config, detected)
+            if value:
+                escaped = value.replace("'", "'\"'\"'")
+                console.print(f"export {var.name}='{escaped}'")
+                exported.add(var.name)
+        console.print()
 
-    # Test Anthropic
-    anthropic_key = get_current_value("ANTHROPIC_API_KEY", all_config)
-    if anthropic_key:
-        print_info("Testing Anthropic API...")
-        try:
-            import httpx
-            resp = httpx.get(
-                "https://api.anthropic.com/v1/models",
-                headers={
-                    "x-api-key": anthropic_key,
-                    "anthropic-version": "2023-06-01",
-                },
-                timeout=10,
-            )
-            if resp.status_code == 200:
-                print_success("Anthropic API: Connected")
-            else:
-                print_error(f"Anthropic API: Error {resp.status_code}")
-        except Exception as e:
-            print_error(f"Anthropic API: {e}")
 
-    # Test Exa
-    exa_key = get_current_value("EXA_API_KEY", all_config)
-    if exa_key:
-        print_info("Testing Exa API...")
-        try:
-            import httpx
-            resp = httpx.post(
-                "https://api.exa.ai/search",
-                headers={"x-api-key": exa_key},
-                json={"query": "test", "numResults": 1},
-                timeout=10,
-            )
-            if resp.status_code == 200:
-                print_success("Exa API: Connected")
-            else:
-                print_error(f"Exa API: Error {resp.status_code}")
-        except Exception as e:
-            print_error(f"Exa API: {e}")
-
+# ============================================================================
+# Main
+# ============================================================================
 
 def main():
     import argparse
@@ -801,30 +996,44 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python scripts/setup.py              # Interactive setup
-  python scripts/setup.py --status     # Show configuration status
-  python scripts/setup.py --validate   # Validate existing configuration
-  python scripts/setup.py --export     # Export as shell commands
-  python scripts/setup.py --test       # Test API connectivity
+  uv run scripts/setup.py              # First-run wizard
+  uv run scripts/setup.py --status     # Show status
+  uv run scripts/setup.py --test       # Test API connectivity
+  uv run scripts/setup.py --export     # Export as shell commands
+  uv run scripts/setup.py --menu       # Interactive menu
         """,
     )
     parser.add_argument("--status", action="store_true", help="Show configuration status")
-    parser.add_argument("--validate", action="store_true", help="Validate existing configuration")
-    parser.add_argument("--export", action="store_true", help="Export as shell commands")
     parser.add_argument("--test", action="store_true", help="Test API connectivity")
+    parser.add_argument("--export", action="store_true", help="Export as shell commands")
+    parser.add_argument("--menu", action="store_true", help="Interactive menu")
+    parser.add_argument("--wizard", action="store_true", help="Run first-run wizard")
 
     args = parser.parse_args()
 
-    if args.status:
-        show_status()
-    elif args.validate:
-        sys.exit(0 if validate_config() else 1)
-    elif args.export:
-        export_shell()
-    elif args.test:
-        test_api_connectivity()
-    else:
-        interactive_setup()
+    try:
+        if args.status:
+            show_status()
+        elif args.test:
+            show_test_results()
+        elif args.export:
+            export_shell()
+        elif args.menu:
+            interactive_menu()
+        elif args.wizard:
+            first_run_wizard()
+        else:
+            # Default: check if first run, then wizard or menu
+            all_config = load_all_config()
+            has_any_config = any(bool(c) for c in all_config.values())
+
+            if has_any_config:
+                interactive_menu()
+            else:
+                first_run_wizard()
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Cancelled[/]")
+        sys.exit(0)
 
 
 if __name__ == "__main__":

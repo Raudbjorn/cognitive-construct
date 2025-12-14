@@ -2,7 +2,6 @@
 name = "cognitive-construct-setup"
 version = "1.0.0"
 description = "Setup wizard for Cognitive Construct skills"
-readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "rich>=13.0",
@@ -10,8 +9,3 @@ dependencies = [
 ]
 
 # Note: Primary usage is `uv run scripts/setup.py` which uses PEP 723 inline metadata.
-# Entry point removed - would require proper package structure to work.
-
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"

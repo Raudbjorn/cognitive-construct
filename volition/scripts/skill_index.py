@@ -55,9 +55,9 @@ def _init_search_engine():
     """
     try:
         # Import from the internal library (no longer exposed as MCP server)
-        from claude_skills_mcp_backend.search_engine import SkillSearchEngine
-        from claude_skills_mcp_backend.skill_loader import load_all_skills
-        from claude_skills_mcp_backend.config import load_config, config_to_dict
+        from skill_search_backend.search_engine import SkillSearchEngine
+        from skill_search_backend.skill_loader import load_all_skills
+        from skill_search_backend.config import load_config, config_to_dict
 
         config_result = load_config()
         if config_result.is_err():
@@ -93,7 +93,7 @@ def cmd_search(args: argparse.Namespace) -> SkillResponse:
         return SkillResponse(
             success=False,
             data=None,
-            message="Skill search engine unavailable. Install claude-skills-mcp-backend.",
+            message="Skill search engine unavailable. Install skill-search-backend.",
         )
 
     engine, _ = result

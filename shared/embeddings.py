@@ -128,7 +128,7 @@ def rank_by_relevance(
         texts = [key(item) for item in items]
 
     # Encode
-    all_texts = [query] + texts
+    all_texts = [query, *texts]
     embeddings = encode(all_texts)
 
     if embeddings is None:
@@ -258,7 +258,7 @@ def deduplicate_by_similarity(
             if similarity > threshold:
                 keep[j] = False  # Mark as duplicate
 
-    return [item for item, k in zip(items, keep) if k]
+    return [item for item, k in zip(items, keep, strict=True) if k]
 
 
 def summarize_for_context(

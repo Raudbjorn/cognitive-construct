@@ -1128,6 +1128,9 @@ def parse_selection(selection: str, entries: list[ApiEntry]) -> list[ApiEntry]:
                 try:
                     start = int(range_parts[0])
                     end = int(range_parts[1])
+                    if start > end:
+                        console.print(f"[yellow]Ignoring invalid range: '{part}' (start > end)[/]")
+                        continue
                     for i in range(start, end + 1):
                         if i in index_to_entry and i not in selected_indices:
                             selected.append(index_to_entry[i])
@@ -1174,9 +1177,10 @@ def create_api_table(entries: list[ApiEntry], all_config: dict[str, dict[str, st
         value = get_current_value(entry.var_name, all_config, detected)
         status = "[green]✓[/]" if value else "[dim]○[/]"
 
-        # Requirement badge
+        # Requirement badge: "!" for required, "R" for recommended, "O" for optional
         req_color = {"required": "red", "recommended": "yellow", "optional": "dim"}
-        req = f"[{req_color[entry.requirement.value]}]{entry.requirement.value[0].upper()}[/]"
+        req_badge = {"required": "!", "recommended": "R", "optional": "O"}
+        req = f"[{req_color[entry.requirement.value]}]{req_badge[entry.requirement.value]}[/]"
 
         # Free tier styling
         free_tier = entry.free_tier
@@ -1223,7 +1227,7 @@ def show_get_keys(selection: str | None = None):
 
     # Legend
     console.print("\n[dim]Status: ✓ = configured, ○ = not configured[/]")
-    console.print("[dim]Requirement: [red]R[/]=required [yellow]R[/]=recommended [dim]O[/]=optional[/]")
+    console.print("[dim]Requirement: [red]![/]=required [yellow]R[/]=recommended [dim]O[/]=optional[/]")
 
     # Get selection
     console.print("\n[bold]Enter selection:[/]")

@@ -295,10 +295,10 @@ def require_skill_config(
             print(f" {skill_name.title()} needs configuration", file=sys.stderr)
             print(f"{'='*60}", file=sys.stderr)
             print(f"\nMissing: {', '.join(status.missing)}", file=sys.stderr)
-            print(f"\nTo configure, run:", file=sys.stderr)
+            print("\nTo configure, run:", file=sys.stderr)
             print(f"  {status.setup_command}", file=sys.stderr)
-            print(f"\nOr for interactive setup:", file=sys.stderr)
-            print(f"  uv run scripts/setup.py\n", file=sys.stderr)
+            print("\nOr for interactive setup:", file=sys.stderr)
+            print("  uv run scripts/setup.py\n", file=sys.stderr)
 
     if exit_on_error:
         sys.exit(EX_CONFIG)

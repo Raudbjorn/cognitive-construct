@@ -190,7 +190,7 @@ def cmd_read(args: argparse.Namespace) -> SkillResponse:
     )
 
 
-def cmd_list(args: argparse.Namespace) -> SkillResponse:
+def cmd_list(_args: argparse.Namespace) -> SkillResponse:
     """List all available skills."""
     result = _init_search_engine()
     if result is None:
@@ -217,7 +217,7 @@ def cmd_list(args: argparse.Namespace) -> SkillResponse:
     )
 
 
-def cmd_status(args: argparse.Namespace) -> SkillResponse:
+def cmd_status(_args: argparse.Namespace) -> SkillResponse:
     """Check skill index status."""
     result = _init_search_engine()
     if result is None:

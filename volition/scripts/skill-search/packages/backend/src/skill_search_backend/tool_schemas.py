@@ -40,7 +40,7 @@ def get_tool_schemas() -> list[Tool]:
                 "Always call this tool FIRST whenever the question requires any "
                 "domain-specific knowledge beyond common sense or simple recall. "
                 "Use it at task start, regardless of the task and whether you are "
-                "sure about the task, It performs semantic search over a curated "
+                "sure about the task. It performs semantic search over a curated "
                 "library of proven skills and returns ranked candidates with "
                 "step-by-step guidance and best practices. Do this before any "
                 "searches, coding, or any other actions as this will inform you "

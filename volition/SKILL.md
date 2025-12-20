@@ -1,11 +1,11 @@
 ---
 name: volition
-description: Agency and execution. Edit code semantically, invoke LLMs, search the web, and query security services.
-version: 5.0.0
+description: Agency and execution. Edit code semantically, invoke LLMs, search the web, query security services, and discover relevant skills.
+version: 5.1.0
 license: MIT
 metadata:
   phase: 5
-  dependencies: python>=3.10, httpx, pydantic
+  dependencies: python>=3.10, httpx, pydantic, sentence-transformers
 ---
 
 # Volition: The Will to Act
@@ -87,6 +87,90 @@ python3 volition.py capabilities
 }
 ```
 
+## Skill Discovery
+
+Volition includes a skill index for finding relevant Claude Agent Skills. Use these commands to discover and load skills dynamically.
+
+### `skill search "<query>"`
+Find skills relevant to a task description using semantic search.
+
+```bash
+python3 volition.py skill search "debug Python API errors" --top_k 3
+```
+
+**Output:**
+```json
+{
+  "success": true,
+  "data": [
+    {"name": "python-debugging", "description": "Debug Python applications...", "relevance": 0.8234},
+    {"name": "api-troubleshooting", "description": "Diagnose API issues...", "relevance": 0.7891}
+  ],
+  "message": "Found 2 relevant skill(s)"
+}
+```
+
+**Options:**
+- `--top_k N`: Number of results to return (default: 3)
+- `--list_docs`: Include document list in results
+
+### `skill read <name> [document]`
+Read a skill's content or specific documents.
+
+```bash
+# Read skill instructions (SKILL.md)
+python3 volition.py skill read python-debugging
+
+# Read a specific document
+python3 volition.py skill read python-debugging scripts/debugger.py
+```
+
+**Output:**
+```json
+{
+  "success": true,
+  "data": {"name": "python-debugging", "content": "...", "documents": ["scripts/debugger.py", "references/common-errors.md"]},
+  "message": "Loaded skill: python-debugging"
+}
+```
+
+### `skill list`
+List all available skills in the index.
+
+```bash
+python3 volition.py skill list
+```
+
+**Output:**
+```json
+{
+  "success": true,
+  "data": [
+    {"name": "python-debugging", "description": "Debug Python applications...", "document_count": 5},
+    {"name": "api-troubleshooting", "description": "Diagnose API issues...", "document_count": 3}
+  ],
+  "message": "Found 42 indexed skill(s)"
+}
+```
+
+### `skill status`
+Check if the skill index is available.
+
+```bash
+python3 volition.py skill status
+```
+
+**Output:**
+```json
+{
+  "success": true,
+  "data": {"available": true, "skill_count": 42, "model": "all-MiniLM-L6-v2"},
+  "message": "Skill index ready"
+}
+```
+
+**Note:** The skill index uses vector embeddings internally. Implementation details (model names, search algorithms, data sources) are opaque - you interact only through these commands.
+
 ## Security Constraints (R.22-R.23)
 
 ### Shodan Queries
@@ -167,14 +251,15 @@ python3 volition.py act "find security issues" --handler llm_call
 
 ## Backends
 
-Volition orchestrates these MCP servers internally:
+Volition uses these libraries internally (implementation details are **opaque**):
 
-- **[Serena](https://github.com/oraios/serena)**: LSP-powered semantic code editing
-- **[cross-llm-mcp](https://github.com/JamesANZ/cross-llm-mcp)**: Multi-provider LLM access
-- **[openai-websearch-mcp](https://github.com/.../openai-websearch-mcp)**: Web search with reasoning
-- **[mcp-shodan](https://github.com/BurtTheCoder/mcp-shodan)**: Security reconnaissance
+- **Serena**: LSP-powered semantic code editing
+- **cross-llm**: Multi-provider LLM access
+- **openai-websearch**: Web search with reasoning
+- **shodan-client**: Security reconnaissance
+- **skill-search**: Vector similarity search for skill discovery
 
-Backend details are **opaque** - you interact only through Volition's unified interface.
+You interact only through Volition's unified command interface. The underlying protocols (MCP, LSP, HTTP APIs) are hidden - you never see tool schemas, JSON-RPC, or protocol-level details.
 
 ## Error Handling
 

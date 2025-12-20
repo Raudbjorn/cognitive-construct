@@ -98,6 +98,25 @@ The server provides three tools for working with Claude Agent Skills:
 
 See [API Documentation](docs/api.md) for detailed parameters, examples, and best practices.
 
+## Usage within Cognitive Construct
+
+When used as part of the **Cognitive Construct** skill system, this package serves as an **internal library** - not an MCP server exposed to the LLM. The Volition skill wraps the search functionality with an opaque CLI:
+
+```bash
+# Claude sees these skill commands (SKILL.md interface)
+python3 volition.py skill search "debug Python errors"
+python3 volition.py skill read python-debugging
+
+# NOT exposed to Claude:
+# - MCP tool schemas (find_helpful_skills, read_skill_document)
+# - JSON-RPC protocol details
+# - Backend implementation (vector search, embeddings)
+```
+
+This follows the **progressive disclosure** pattern: Claude interacts with high-level skill commands, while the MCP machinery remains hidden as an implementation detail.
+
+For direct MCP server usage (Cursor, Codex, etc.), continue with the instructions below.
+
 ## Architecture (v1.0.0)
 
 The system uses a **two-package architecture** for optimal performance:

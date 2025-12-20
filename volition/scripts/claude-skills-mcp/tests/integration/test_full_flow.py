@@ -108,6 +108,58 @@ def test_hardcoded_tools_match_backend():
         print(f"✓ Tool schema valid: {tool.name}")
 
 
+def test_frontend_backend_schemas_identical():
+    """Verify frontend and backend tool schemas are identical.
+
+    This is critical - schema mismatches cause 'invalid tool use' errors in Claude.
+    Both packages now import from their own tool_schemas.py which should be identical.
+
+    Uses order-independent comparison to avoid false failures on reordering.
+    """
+    from claude_skills_mcp.tool_schemas import (
+        TOOL_SCHEMAS as FRONTEND_SCHEMAS,
+        DEFAULT_TOP_K as FRONTEND_DEFAULT_TOP_K,
+    )
+    from claude_skills_mcp_backend.tool_schemas import (
+        TOOL_SCHEMAS as BACKEND_SCHEMAS,
+        DEFAULT_TOP_K as BACKEND_DEFAULT_TOP_K,
+    )
+
+    # Check constants match
+    assert FRONTEND_DEFAULT_TOP_K == BACKEND_DEFAULT_TOP_K, (
+        f"DEFAULT_TOP_K mismatch: frontend={FRONTEND_DEFAULT_TOP_K}, "
+        f"backend={BACKEND_DEFAULT_TOP_K}"
+    )
+    print(f"✓ DEFAULT_TOP_K matches: {FRONTEND_DEFAULT_TOP_K}")
+
+    # Build maps keyed by tool name (order-independent)
+    frontend_by_name = {tool.name: tool for tool in FRONTEND_SCHEMAS}
+    backend_by_name = {tool.name: tool for tool in BACKEND_SCHEMAS}
+
+    # Ensure both sides expose the same tool set
+    assert frontend_by_name.keys() == backend_by_name.keys(), (
+        f"Tool set mismatch: "
+        f"frontend-only={frontend_by_name.keys() - backend_by_name.keys()}, "
+        f"backend-only={backend_by_name.keys() - frontend_by_name.keys()}"
+    )
+    print(f"✓ Same tool set: {sorted(frontend_by_name.keys())}")
+
+    # Enforce full schema equality per tool (order-independent)
+    for name in sorted(frontend_by_name.keys()):
+        frontend_tool = frontend_by_name[name]
+        backend_tool = backend_by_name[name]
+
+        # Compare all fields, not just a subset
+        assert frontend_tool.name == backend_tool.name
+        assert frontend_tool.description == backend_tool.description, (
+            f"Description mismatch for {name}"
+        )
+        assert frontend_tool.inputSchema == backend_tool.inputSchema, (
+            f"inputSchema mismatch for {name}"
+        )
+        print(f"✓ Schema identical: {name}")
+
+
 @pytest.mark.asyncio
 async def test_backend_manager_check():
     """Test that backend manager can check for uvx."""

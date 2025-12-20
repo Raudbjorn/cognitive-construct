@@ -69,6 +69,21 @@ from .feedback import (
     get_source_effectiveness,
     get_recommended_sources,
 )
+from .embeddings import (
+    compress_results,
+    rank_by_relevance,
+    deduplicate_by_similarity,
+    summarize_for_context,
+    encode,
+    ScoredItem,
+)
+from .config_check import (
+    check_skill_config,
+    require_skill_config,
+    get_all_skills_status,
+    ConfigStatus,
+    EX_CONFIG,
+)
 
 __all__ = [
     # Credentials
@@ -143,4 +158,17 @@ __all__ = [
     "record_feedback",
     "get_source_effectiveness",
     "get_recommended_sources",
+    # Embeddings (lightweight Model2Vec)
+    "compress_results",
+    "rank_by_relevance",
+    "deduplicate_by_similarity",
+    "summarize_for_context",
+    "encode",
+    "ScoredItem",
+    # Config Check
+    "check_skill_config",
+    "require_skill_config",
+    "get_all_skills_status",
+    "ConfigStatus",
+    "EX_CONFIG",
 ]

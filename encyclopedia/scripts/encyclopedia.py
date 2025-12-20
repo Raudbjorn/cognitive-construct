@@ -16,13 +16,14 @@ import re
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from difflib import SequenceMatcher
 from enum import Enum
 from pathlib import Path
 from typing import Any, Awaitable
 
 # Import client libraries from sibling packages
 sys.path.insert(0, str(Path(__file__).parent))
+# Import shared utilities from project root
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from context7client import Context7Client
 from exaclient import ExaClient, WebSearchOptions, CodeSearchOptions
@@ -354,15 +355,12 @@ class SearchResult:
         }
 
 
-def semantic_similarity(text1: str, text2: str) -> float:
-    """Calculate semantic similarity using sequence matching."""
-    t1 = text1.lower().strip()
-    t2 = text2.lower().strip()
-    return SequenceMatcher(None, t1, t2).ratio()
-
-
 def deduplicate_results(results: list[SearchResult]) -> list[SearchResult]:
-    """Deduplicate results based on semantic similarity."""
+    """Deduplicate results using semantic embeddings.
+
+    Uses Model2Vec for true semantic similarity instead of string matching.
+    Falls back to keeping all results if embeddings unavailable.
+    """
     if not results:
         return []
 
@@ -373,33 +371,72 @@ def deduplicate_results(results: list[SearchResult]) -> list[SearchResult]:
         reverse=True
     )
 
-    deduplicated: list[SearchResult] = []
-    for result in sorted_results:
-        is_duplicate = False
-        for existing in deduplicated:
-            title_sim = semantic_similarity(result.title, existing.title)
-            content_sim = semantic_similarity(result.content[:200], existing.content[:200])
+    try:
+        from shared.embeddings import deduplicate_by_similarity
 
-            if title_sim > SIMILARITY_THRESHOLD or content_sim > SIMILARITY_THRESHOLD:
-                is_duplicate = True
-                break
+        # Deduplicate using semantic embeddings
+        deduplicated = deduplicate_by_similarity(
+            sorted_results,
+            threshold=SIMILARITY_THRESHOLD,
+            key=lambda r: f"{r.title} {r.content[:500]}",
+        )
+        return deduplicated
 
-        if not is_duplicate:
-            deduplicated.append(result)
+    except ImportError:
+        # Fallback: no deduplication if embeddings unavailable
+        return sorted_results
 
-    return deduplicated
+
+def rank_results_by_query(results: list[SearchResult], query: str) -> list[SearchResult]:
+    """Rank results by semantic relevance to query.
+
+    Uses Model2Vec embeddings for true semantic ranking.
+    Falls back to source priority if embeddings unavailable.
+    """
+    if not results:
+        return []
+
+    try:
+        from shared.embeddings import rank_by_relevance
+
+        ranked = rank_by_relevance(
+            results,
+            query,
+            key=lambda r: f"{r.title} {r.content[:500]}",
+        )
+        # Update relevance scores and return in ranked order
+        ranked_results = []
+        for scored in ranked:
+            result = scored.item
+            result.relevance = scored.score
+            ranked_results.append(result)
+        return ranked_results
+
+    except ImportError:
+        # Fallback: sort by existing relevance then source priority
+        return sorted(
+            results,
+            key=lambda r: (r.relevance, SOURCE_PRIORITY.get(r.source, 0)),
+            reverse=True
+        )
 
 
-def rank_results(results: list[SearchResult]) -> list[SearchResult]:
-    """Rank results by relevance and recency."""
-    def score(r: SearchResult) -> tuple[float, float]:
-        recency = 0.0
-        if r.timestamp:
-            days_old = (datetime.now() - r.timestamp).days
-            recency = max(0, 1 - days_old / 365)
-        return (r.relevance, recency)
+def compress_for_context(results: list[SearchResult], query: str, max_results: int = 5) -> list[SearchResult]:
+    """Compress results to most relevant items for LLM context.
 
-    return sorted(results, key=score, reverse=True)
+    Deduplicates, ranks by semantic relevance, and truncates.
+    """
+    if not results:
+        return []
+
+    # Deduplicate first
+    unique = deduplicate_results(results)
+
+    # Rank by relevance to query
+    ranked = rank_results_by_query(unique, query)
+
+    # Return top N
+    return ranked[:max_results]
 
 
 def extract_repo_hint(query: str) -> tuple[str | None, str]:
@@ -769,12 +806,8 @@ async def execute_search(query: str, sources: list[str] | None = None, limit: in
             "degradation": degradation.summary(),
         }
 
-    # Deduplicate and rank
-    results = deduplicate_results(results)
-    results = rank_results(results)
-
-    # Limit results
-    results = results[:limit]
+    # Compress results: deduplicate, rank by semantic relevance, limit
+    results = compress_for_context(results, query, max_results=limit)
 
     return {
         "status": "success",
@@ -932,6 +965,13 @@ Examples:
                             help="Analysis depth (default: shallow)")
 
     args = parser.parse_args()
+
+    # Check configuration before running
+    try:
+        from shared.config_check import require_skill_config
+        require_skill_config("encyclopedia")
+    except ImportError:
+        pass  # shared module not available, skip check
 
     # Ensure directories exist
     ensure_dirs()

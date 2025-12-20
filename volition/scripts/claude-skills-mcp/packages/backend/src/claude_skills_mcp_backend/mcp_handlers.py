@@ -12,6 +12,7 @@ from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
 from .search_engine import SkillSearchEngine
+from .tool_schemas import DEFAULT_TOP_K, TOOL_SCHEMAS
 from .types import LoadingState
 
 logger = logging.getLogger(__name__)
@@ -36,7 +37,7 @@ class SkillsMCPServer:
         self,
         search_engine: SkillSearchEngine,
         loading_state: LoadingState,
-        default_top_k: int = 3,
+        default_top_k: int = DEFAULT_TOP_K,
         max_content_chars: int | None = None,
     ):
         """Initialize the MCP server.
@@ -67,111 +68,11 @@ class SkillsMCPServer:
 
         @self.server.list_tools()
         async def list_tools() -> list[Tool]:
-            """List available tools."""
-            return [
-                Tool(
-                    name="find_helpful_skills",
-                    title="Find the most helpful skill for any task",
-                    description=(
-                        "Always call this tool FIRST whenever the question requires any "
-                        "domain-specific knowledge beyond common sense or simple recall. "
-                        "Use it at task start, regardless of the task and whether you are "
-                        "sure about the task, It performs semantic search over a curated "
-                        "library of proven skills and returns ranked candidates with "
-                        "step-by-step guidance and best practices. Do this before any "
-                        "searches, coding, or any other actions as this will inform you "
-                        "about the best approach to take."
-                    ),
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "task_description": {
-                                "type": "string",
-                                "description": (
-                                    "Description of the task you want to accomplish. "
-                                    "Be specific about your goal, context, or problem "
-                                    "domain for better results (e.g., 'debug Python API "
-                                    "errors', 'process genomic data', 'build React dashboard')"
-                                ),
-                            },
-                            "top_k": {
-                                "type": "integer",
-                                "description": (
-                                    f"Number of skills to return (default: {self.default_top_k}). "
-                                    "Higher values provide more options but may include less "
-                                    "relevant results."
-                                ),
-                                "default": self.default_top_k,
-                                "minimum": 1,
-                                "maximum": 20,
-                            },
-                            "list_documents": {
-                                "type": "boolean",
-                                "description": (
-                                    "Include a list of available documents (scripts, "
-                                    "references, assets) for each skill (default: True)"
-                                ),
-                                "default": True,
-                            },
-                        },
-                        "required": ["task_description"],
-                    },
-                ),
-                Tool(
-                    name="read_skill_document",
-                    title="Open skill documents and assets",
-                    description=(
-                        "Use after finding a relevant skill to retrieve specific documents "
-                        "(scripts, references, assets). Supports pattern matching "
-                        "(e.g., 'scripts/*.py') to fetch multiple files. Returns text content "
-                        "or URLs and never executes code. Prefer pulling only the files you "
-                        "need to complete the current step."
-                    ),
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "skill_name": {
-                                "type": "string",
-                                "description": "Name of the skill (as returned by find_helpful_skills)",
-                            },
-                            "document_path": {
-                                "type": "string",
-                                "description": (
-                                    "Path or pattern to match documents. Examples: "
-                                    "'scripts/example.py', 'scripts/*.py', 'references/*', "
-                                    "'assets/diagram.png'. If not provided, returns a list "
-                                    "of all available documents."
-                                ),
-                            },
-                            "include_base64": {
-                                "type": "boolean",
-                                "description": (
-                                    "For images: if True, return base64-encoded content; "
-                                    "if False, return only URL. Default: False (URL only "
-                                    "for efficiency)"
-                                ),
-                                "default": False,
-                            },
-                        },
-                        "required": ["skill_name"],
-                    },
-                ),
-                Tool(
-                    name="list_skills",
-                    title="List available skills",
-                    description=(
-                        "Returns the full inventory of loaded skills (names, descriptions, "
-                        "sources, document counts) for exploration or debugging. For task-driven "
-                        "work, prefer calling 'find_helpful_skills' first to locate the most "
-                        "relevant option before reading documents."
-                    ),
-                    inputSchema={
-                        "type": "object",
-                        "properties": {},
-                        "required": [],
-                    },
-                ),
-            ]
+            """List available tools.
+
+            Returns the shared TOOL_SCHEMAS to ensure frontend/backend consistency.
+            """
+            return TOOL_SCHEMAS
 
         @self.server.call_tool()
         async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:

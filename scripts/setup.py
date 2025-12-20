@@ -13,6 +13,8 @@ Usage:
     uv run scripts/setup.py --status     # Show configuration status
     uv run scripts/setup.py --test       # Test API connectivity
     uv run scripts/setup.py --export     # Export as shell commands
+    uv run scripts/setup.py --get-keys   # Interactive API signup helper
+    uv run scripts/setup.py --get-keys "1,3,encyclopedia"  # Open specific signups
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ import re
 import sys
 import time
 import asyncio
+import webbrowser
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Callable
@@ -45,6 +48,7 @@ import httpx
 # Constants
 CONSTRUCT_ROOT = Path(__file__).parent.parent
 SKILLS = ["encyclopedia", "inland-empire", "rhetoric", "volition"]
+BROWSER_TAB_DELAY_SECONDS = 0.3  # Delay between opening browser tabs to prevent chaos
 console = Console()
 
 # Skill icons
@@ -74,6 +78,8 @@ class ConfigVar:
     secret: bool = True
     group: str = ""
     test_endpoint: str = ""  # For connectivity testing
+    benefit: str = ""  # What this API unlocks
+    free_tier: str = ""  # Free tier info (empty = no free tier)
 
 
 @dataclass
@@ -138,6 +144,8 @@ ENCYCLOPEDIA_CONFIG = SkillConfig(
             validator=validate_nonempty,
             group="search",
             test_endpoint="exa",
+            benefit="Neural web search, code search, research papers. Best for technical queries.",
+            free_tier="1000 searches/month free",
         ),
         ConfigVar(
             name="PERPLEXITY_API_KEY",
@@ -147,13 +155,16 @@ ENCYCLOPEDIA_CONFIG = SkillConfig(
             validator=validate_nonempty,
             group="search",
             test_endpoint="perplexity",
+            benefit="AI-powered research with citations. Great for current events and synthesis.",
+            free_tier="Limited free tier",
         ),
         ConfigVar(
             name="CONTEXT7_API_KEY",
             description="Context7 - Library docs (works without key)",
             requirement=Requirement.OPTIONAL,
             url="https://context7.com/",
-            # No validator - key is truly optional per description
+            benefit="Up-to-date library documentation. Works WITHOUT key (rate limited).",
+            free_tier="Works without key!",
         ),
         ConfigVar(
             name="KAGI_API_KEY",
@@ -162,6 +173,8 @@ ENCYCLOPEDIA_CONFIG = SkillConfig(
             url="https://kagi.com/settings?p=api",
             validator=validate_nonempty,
             test_endpoint="kagi",
+            benefit="Ad-free, privacy-focused search. High quality results.",
+            free_tier="",  # No free tier
         ),
         ConfigVar(
             name="TAVILY_API_KEY",
@@ -170,6 +183,8 @@ ENCYCLOPEDIA_CONFIG = SkillConfig(
             url="https://tavily.com/",
             validator=validate_nonempty,
             test_endpoint="tavily",
+            benefit="Search optimized for LLMs. Good for fact retrieval.",
+            free_tier="1000 searches/month free",
         ),
         ConfigVar(
             name="BRAVE_API_KEY",
@@ -178,6 +193,8 @@ ENCYCLOPEDIA_CONFIG = SkillConfig(
             url="https://brave.com/search/api/",
             validator=validate_nonempty,
             test_endpoint="brave",
+            benefit="Independent search index. Privacy-focused.",
+            free_tier="2000 queries/month free",
         ),
         ConfigVar(
             name="SERPER_API_KEY",
@@ -186,6 +203,8 @@ ENCYCLOPEDIA_CONFIG = SkillConfig(
             url="https://serper.dev/",
             validator=validate_nonempty,
             test_endpoint="serper",
+            benefit="Google search results via API. Most comprehensive web coverage.",
+            free_tier="2500 searches free (one-time)",
         ),
     ],
 )
@@ -203,6 +222,8 @@ INLAND_EMPIRE_CONFIG = SkillConfig(
             url="https://app.mem0.ai/",
             validator=validate_nonempty,
             test_endpoint="mem0",
+            benefit="Semantic memory with automatic extraction. Remembers patterns across sessions.",
+            free_tier="1000 memories free",
         ),
         ConfigVar(
             name="LIBSQL_URL",
@@ -212,12 +233,16 @@ INLAND_EMPIRE_CONFIG = SkillConfig(
             default="file:~/.inland-empire/construct.db",
             validator=validate_nonempty,
             secret=False,
+            benefit="Graph-based fact storage. Entity relationships and structured knowledge.",
+            free_tier="500 DBs, 9GB storage free (or use local SQLite)",
         ),
         ConfigVar(
             name="LIBSQL_AUTH_TOKEN",
             description="LibSQL/Turso auth token",
             requirement=Requirement.OPTIONAL,
             validator=validate_nonempty,
+            benefit="Required for cloud Turso. Not needed for local SQLite.",
+            free_tier="Included with Turso free tier",
         ),
         ConfigVar(
             name="QDRANT_API_KEY",
@@ -225,6 +250,8 @@ INLAND_EMPIRE_CONFIG = SkillConfig(
             requirement=Requirement.OPTIONAL,
             url="https://qdrant.tech/",
             validator=validate_nonempty,
+            benefit="Vector similarity search. Find semantically related memories.",
+            free_tier="1GB free cluster",
         ),
     ],
 )
@@ -245,6 +272,8 @@ RHETORIC_CONFIG = SkillConfig(
             validator=validate_api_key_format("sk-"),
             group="llm",
             test_endpoint="openai",
+            benefit="GPT-4o, o1 reasoning. Best for complex analysis and code.",
+            free_tier="$5 free credit (new accounts)",
         ),
         ConfigVar(
             name="ANTHROPIC_API_KEY",
@@ -254,6 +283,8 @@ RHETORIC_CONFIG = SkillConfig(
             validator=validate_api_key_format("sk-ant-"),
             group="llm",
             test_endpoint="anthropic",
+            benefit="Claude Opus/Sonnet. Excellent for nuanced reasoning and safety.",
+            free_tier="$5 free credit (new accounts)",
         ),
         ConfigVar(
             name="OPENROUTER_API_KEY",
@@ -263,6 +294,8 @@ RHETORIC_CONFIG = SkillConfig(
             validator=validate_api_key_format("sk-or-"),
             group="llm",
             test_endpoint="openrouter",
+            benefit="Access 100+ models via one API. Good for model diversity in deliberation.",
+            free_tier="Some free models available",
         ),
         ConfigVar(
             name="GOOGLE_CLOUD_API_KEY",
@@ -272,6 +305,8 @@ RHETORIC_CONFIG = SkillConfig(
             validator=validate_api_key_format("AIza"),
             group="llm",
             test_endpoint="google",
+            benefit="Gemini 2.0 Flash/Pro. Fast, large context, multimodal.",
+            free_tier="Generous free tier (15 RPM)",
         ),
         ConfigVar(
             name="MISTRAL_API_KEY",
@@ -281,6 +316,8 @@ RHETORIC_CONFIG = SkillConfig(
             validator=validate_nonempty,
             group="llm",
             test_endpoint="mistral",
+            benefit="Mixtral, Mistral Large. Strong open-weight models.",
+            free_tier="Limited free tier",
         ),
         ConfigVar(
             name="XAI_API_KEY",
@@ -290,6 +327,8 @@ RHETORIC_CONFIG = SkillConfig(
             validator=validate_nonempty,
             group="llm",
             test_endpoint="xai",
+            benefit="Grok models. Real-time X/Twitter data access.",
+            free_tier="$25 free credit/month",
         ),
         ConfigVar(
             name="TOGETHER_API_KEY",
@@ -299,6 +338,8 @@ RHETORIC_CONFIG = SkillConfig(
             validator=validate_nonempty,
             group="llm",
             test_endpoint="together",
+            benefit="Fast inference for open models. Llama, Qwen, DeepSeek.",
+            free_tier="$5 free credit",
         ),
         ConfigVar(
             name="DEFAULT_LLM_PROVIDER",
@@ -307,6 +348,8 @@ RHETORIC_CONFIG = SkillConfig(
             default="gemini",
             validator=validate_nonempty,
             secret=False,
+            benefit="Which LLM to use by default when not specified.",
+            free_tier="N/A (config only)",
         ),
     ],
 )
@@ -327,6 +370,8 @@ VOLITION_CONFIG = SkillConfig(
             validator=validate_api_key_format("sk-"),
             group="llm",
             test_endpoint="openai",
+            benefit="GPT-4o for code editing and web search integration.",
+            free_tier="$5 free credit (new accounts)",
         ),
         ConfigVar(
             name="ANTHROPIC_API_KEY",
@@ -336,6 +381,8 @@ VOLITION_CONFIG = SkillConfig(
             validator=validate_api_key_format("sk-ant-"),
             group="llm",
             test_endpoint="anthropic",
+            benefit="Claude for careful code review and safe execution.",
+            free_tier="$5 free credit (new accounts)",
         ),
         ConfigVar(
             name="DEEPSEEK_API_KEY",
@@ -345,6 +392,8 @@ VOLITION_CONFIG = SkillConfig(
             validator=validate_nonempty,
             group="llm",
             test_endpoint="deepseek",
+            benefit="DeepSeek Coder. Excellent for code generation, very cheap.",
+            free_tier="$5 free credit",
         ),
         ConfigVar(
             name="SHODAN_API_KEY",
@@ -353,6 +402,8 @@ VOLITION_CONFIG = SkillConfig(
             url="https://account.shodan.io/",
             validator=validate_nonempty,
             test_endpoint="shodan",
+            benefit="Security reconnaissance. Find exposed services, vulnerabilities.",
+            free_tier="Limited free tier (account required)",
         ),
     ],
 )
@@ -985,6 +1036,241 @@ def export_shell(all_config: dict[str, dict[str, str]] | None = None, detected: 
 
 
 # ============================================================================
+# Get Keys - Interactive API Signup
+# ============================================================================
+
+@dataclass
+class ApiEntry:
+    """API entry for the signup list."""
+    index: int
+    skill: str
+    var_name: str
+    description: str
+    url: str
+    benefit: str
+    free_tier: str
+    requirement: Requirement
+
+
+def build_api_list() -> list[ApiEntry]:
+    """Build numbered list of all APIs with signup URLs."""
+    entries: list[ApiEntry] = []
+    seen_vars: set[str] = set()
+    index = 1
+
+    for skill_config in ALL_CONFIGS:
+        for var in skill_config.variables:
+            # Skip vars without URLs or duplicates (shared across skills)
+            if not var.url or var.name in seen_vars:
+                continue
+            seen_vars.add(var.name)
+
+            entries.append(ApiEntry(
+                index=index,
+                skill=skill_config.name,
+                var_name=var.name,
+                description=var.description,
+                url=var.url,
+                benefit=var.benefit,
+                free_tier=var.free_tier,
+                requirement=var.requirement,
+            ))
+            index += 1
+
+    return entries
+
+
+def parse_selection(selection: str, entries: list[ApiEntry]) -> list[ApiEntry]:
+    """Parse selection input like '1,3,5-7,encyclopedia' into list of entries.
+
+    Supports:
+    - Single numbers: "1", "3"
+    - Ranges: "5-7" (inclusive)
+    - Skill names: "encyclopedia", "rhetoric"
+    - Combinations: "1,3,5-7,encyclopedia"
+    - "all" for everything
+    """
+    if not selection.strip():
+        return []
+
+    if selection.strip().lower() == "all":
+        return entries
+
+    selected: list[ApiEntry] = []
+    selected_indices: set[int] = set()
+    # O(1) lookup by index for numeric selections
+    index_to_entry = {entry.index: entry for entry in entries}
+
+    for part in selection.split(","):
+        part = part.strip().lower()
+        if not part:
+            continue
+
+        # Check if it's a skill name
+        skill_match = None
+        for skill_name in SKILLS:
+            if part == skill_name or part == skill_name.replace("-", ""):
+                skill_match = skill_name
+                break
+
+        if skill_match:
+            # Add all entries for this skill
+            for entry in entries:
+                if entry.skill == skill_match and entry.index not in selected_indices:
+                    selected.append(entry)
+                    selected_indices.add(entry.index)
+            continue
+
+        # Check if it's a range (e.g., "5-7")
+        if "-" in part and part[0] != "-":
+            range_parts = part.split("-")
+            if len(range_parts) == 2:
+                try:
+                    start = int(range_parts[0])
+                    end = int(range_parts[1])
+                    for i in range(start, end + 1):
+                        if i in index_to_entry and i not in selected_indices:
+                            selected.append(index_to_entry[i])
+                            selected_indices.add(i)
+                    continue
+                except ValueError:
+                    pass
+
+        # Try as single number
+        try:
+            num = int(part)
+            if num in index_to_entry and num not in selected_indices:
+                selected.append(index_to_entry[num])
+                selected_indices.add(num)
+        except ValueError:
+            console.print(f"[yellow]Ignoring unrecognized: '{part}'[/]")
+
+    return selected
+
+
+def create_api_table(entries: list[ApiEntry], all_config: dict[str, dict[str, str]], detected: dict[str, str]) -> Table:
+    """Create table showing all APIs with benefits."""
+    table = Table(
+        title="🔑 API Key Signup Guide",
+        box=ROUNDED,
+        show_header=True,
+        header_style="bold cyan",
+    )
+    table.add_column("#", justify="right", style="bold cyan", width=3)
+    table.add_column("Skill", style="dim", width=12)
+    table.add_column("API", width=20)
+    table.add_column("Benefit", width=40)
+    table.add_column("Free Tier", width=20)
+    table.add_column("Status", justify="center", width=8)
+
+    current_skill = None
+    for entry in entries:
+        # Add separator between skills
+        if current_skill is not None and entry.skill != current_skill:
+            table.add_row("", "", "", "", "", "")
+        current_skill = entry.skill
+
+        # Check if already configured
+        value = get_current_value(entry.var_name, all_config, detected)
+        status = "[green]✓[/]" if value else "[dim]○[/]"
+
+        # Requirement badge
+        req_color = {"required": "red", "recommended": "yellow", "optional": "dim"}
+        req = f"[{req_color[entry.requirement.value]}]{entry.requirement.value[0].upper()}[/]"
+
+        # Free tier styling
+        free_tier = entry.free_tier
+        if free_tier:
+            if "free" in free_tier.lower() or "without key" in free_tier.lower():
+                free_tier = f"[green]{free_tier}[/]"
+            else:
+                free_tier = f"[dim]{free_tier}[/]"
+        else:
+            free_tier = "[red]Paid only[/]"
+
+        icon = SKILL_ICONS.get(entry.skill, "")
+        skill_display = f"{icon} {entry.skill}"
+
+        table.add_row(
+            str(entry.index),
+            skill_display,
+            f"{entry.description} {req}",
+            entry.benefit or "[dim]-[/]",
+            free_tier,
+            status,
+        )
+
+    return table
+
+
+def show_get_keys(selection: str | None = None):
+    """Interactive API key signup helper."""
+    all_config = load_all_config()
+    detected = auto_detect_env_vars()
+    entries = build_api_list()
+
+    console.print()
+    console.print(Panel.fit(
+        "[bold cyan]🔑 API Key Signup Helper[/]\n\n"
+        "Select which APIs you'd like to sign up for.\n"
+        "Browser tabs will open for each selection.",
+        border_style="cyan",
+    ))
+
+    # Show the table
+    console.print()
+    console.print(create_api_table(entries, all_config, detected))
+
+    # Legend
+    console.print("\n[dim]Status: ✓ = configured, ○ = not configured[/]")
+    console.print("[dim]Requirement: [red]R[/]=required [yellow]R[/]=recommended [dim]O[/]=optional[/]")
+
+    # Get selection
+    console.print("\n[bold]Enter selection:[/]")
+    console.print("[dim]  Examples: 1,3,5-7  |  encyclopedia  |  all  |  1-5,rhetoric[/]")
+    console.print("[dim]  Press Enter without input to cancel[/]")
+
+    if selection is None:
+        try:
+            selection = Prompt.ask("\n[cyan]Selection[/]", default="")
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Cancelled[/]")
+            return
+
+    if not selection.strip():
+        console.print("[dim]No selection made[/]")
+        return
+
+    # Parse and open
+    selected = parse_selection(selection, entries)
+
+    if not selected:
+        console.print("[yellow]No valid selections found[/]")
+        return
+
+    console.print(f"\n[bold]Opening {len(selected)} signup page(s)...[/]")
+
+    opened_count = 0
+    for entry in selected:
+        console.print(f"  [cyan]→[/] {entry.description}: [blue link={entry.url}]{entry.url}[/]")
+        try:
+            webbrowser.open(entry.url)
+            opened_count += 1
+        except Exception:
+            # Fallback for headless systems - URL is already printed above
+            pass
+        time.sleep(BROWSER_TAB_DELAY_SECONDS)
+
+    if opened_count == len(selected):
+        console.print(f"\n[green]✓ Opened {opened_count} page(s) in browser[/]")
+    elif opened_count > 0:
+        console.print(f"\n[yellow]Opened {opened_count}/{len(selected)} page(s) (some failed)[/]")
+    else:
+        console.print("\n[yellow]Could not open browser. URLs are printed above.[/]")
+    console.print("[dim]After signing up, run 'uv run scripts/setup.py' to configure the keys[/]")
+
+
+# ============================================================================
 # Main
 # ============================================================================
 
@@ -1000,12 +1286,16 @@ Examples:
   uv run scripts/setup.py --status     # Show status
   uv run scripts/setup.py --test       # Test API connectivity
   uv run scripts/setup.py --export     # Export as shell commands
+  uv run scripts/setup.py --get-keys   # Interactive API signup helper
+  uv run scripts/setup.py --get-keys "1,3,5-7,encyclopedia"  # Open specific signups
   uv run scripts/setup.py --menu       # Interactive menu
         """,
     )
     parser.add_argument("--status", action="store_true", help="Show configuration status")
     parser.add_argument("--test", action="store_true", help="Test API connectivity")
     parser.add_argument("--export", action="store_true", help="Export as shell commands")
+    parser.add_argument("--get-keys", nargs="?", const="", metavar="SELECTION",
+                       help="Open API signup pages (e.g., '1,3,5-7,encyclopedia' or 'all')")
     parser.add_argument("--menu", action="store_true", help="Interactive menu")
     parser.add_argument("--wizard", action="store_true", help="Run first-run wizard")
 
@@ -1018,6 +1308,9 @@ Examples:
             show_test_results()
         elif args.export:
             export_shell()
+        elif args.get_keys is not None:
+            # --get-keys with or without selection argument
+            show_get_keys(args.get_keys if args.get_keys else None)
         elif args.menu:
             interactive_menu()
         elif args.wizard:

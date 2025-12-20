@@ -1,10 +1,12 @@
-"""Shared tool schemas for Claude Skills MCP.
+"""Tool schemas for Claude Skills MCP frontend.
 
-This module is the single source of truth for tool definitions.
-Both frontend (proxy) and backend use these exact schemas to avoid mismatches
-that cause "invalid tool use" errors in Claude.
+This is a COPY of the backend's canonical tool_schemas.py. Keep in sync!
+The backend module (claude_skills_mcp_backend.tool_schemas) is the source of truth.
 
-IMPORTANT: If you modify these schemas, ensure both packages are updated/released.
+IMPORTANT: Do not modify this file directly. Instead:
+           1. Update backend/src/claude_skills_mcp_backend/tool_schemas.py
+           2. Copy changes here
+           3. Run `pytest tests/integration/test_full_flow.py -k schema` to verify
 """
 
 from __future__ import annotations

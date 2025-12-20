@@ -145,17 +145,14 @@ def test_frontend_backend_schemas_identical():
     print(f"✓ Same tool set: {sorted(frontend_by_name.keys())}")
 
     # Enforce full schema equality per tool (order-independent)
+    # Uses model_dump() to compare ALL fields, catching any divergence
     for name in sorted(frontend_by_name.keys()):
         frontend_tool = frontend_by_name[name]
         backend_tool = backend_by_name[name]
 
-        # Compare all fields, not just a subset
-        assert frontend_tool.name == backend_tool.name
-        assert frontend_tool.description == backend_tool.description, (
-            f"Description mismatch for {name}"
-        )
-        assert frontend_tool.inputSchema == backend_tool.inputSchema, (
-            f"inputSchema mismatch for {name}"
+        # Full comparison via model_dump() catches any field divergence
+        assert frontend_tool.model_dump() == backend_tool.model_dump(), (
+            f"Tool schema mismatch for {name}"
         )
         print(f"✓ Schema identical: {name}")
 

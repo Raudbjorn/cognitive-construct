@@ -678,6 +678,14 @@ def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
 
+    # Check configuration before running
+    try:
+        sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+        from shared.config_check import require_skill_config
+        require_skill_config("volition", output_format="json")
+    except ImportError:
+        pass  # shared module not available, skip check
+
     try:
         if args.command == "act":
             result = asyncio.run(cmd_act(args.action, handler=args.handler))

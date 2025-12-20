@@ -30,3 +30,6 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
+
+# Temporary review files
+code-review.txt

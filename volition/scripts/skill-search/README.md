@@ -1,0 +1,192 @@
+# Claude Skills MCP Server
+
+[![Tests](https://github.com/K-Dense-AI/skill-search/actions/workflows/test.yml/badge.svg)](https://github.com/K-Dense-AI/skill-search/actions/workflows/test.yml)
+[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
+[![PyPI version](https://badge.fury.io/py/skill-search.svg?icon=si%3Apython)](https://badge.fury.io/py/skill-search)
+
+> **Use [Claude's powerful new Skills system](https://www.anthropic.com/news/skills) with ANY AI model or coding assistant** - including Cursor, Codex, GPT-5, Gemini, and more. This MCP server brings Anthropic's Agent Skills framework to the entire AI ecosystem through the Model Context Protocol.
+
+A Model Context Protocol (MCP) server that provides intelligent search capabilities for discovering relevant Claude Agent Skills using vector embeddings and semantic similarity. This server implements the same progressive disclosure architecture that Anthropic describes in their [Agent Skills engineering blog](https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills), making specialized skills available to any MCP-compatible AI application.
+
+**An open-source project by [K-Dense AI](https://k-dense.ai)** - creators of autonomous AI scientists for scientific research.
+
+This MCP server enables any MCP-compatible AI assistant to intelligently search and retrieve skills from our curated [Claude Scientific Skills](https://github.com/K-Dense-AI/claude-scientific-skills) repository and other skill sources like the [Official Claude Skills](https://github.com/anthropics/skills).
+
+<a href="https://cursor.com/en-US/install-mcp?name=skill-search&config=eyJjb21tYW5kIjoidXZ4IGNsYXVkZS1za2lsbHMtbWNwIn0%3D">
+  <picture>
+    <source srcset="https://cursor.com/deeplink/mcp-install-light.svg" media="(prefers-color-scheme: dark)">
+    <source srcset="https://cursor.com/deeplink/mcp-install-dark.svg" media="(prefers-color-scheme: light)">
+    <img src="https://cursor.com/deeplink/mcp-install-dark.svg" alt="Install MCP Server" style="height:2.7em;"/>
+  </picture>
+</a>
+
+## Demo
+
+![Claude Skills MCP in Action](docs/demo.gif)
+
+*Semantic search and progressive loading of Claude Agent Skills in Cursor*
+
+## Highlights
+
+- **Two-Package Architecture**: Lightweight frontend (~15 MB) starts instantly; backend (~250 MB) downloads in background
+- **No Cursor Timeout**: Frontend responds in <5 seconds, solving the timeout issue
+- **Semantic Search**: Vector embeddings for intelligent skill discovery
+- **Progressive Disclosure**: Multi-level skill loading (metadata → full content → files)
+- **Zero Configuration**: Works out of the box with curated skills
+- **Multi-Source**: Load from GitHub repositories and local directories
+- **Fast & Local**: No API keys needed, with automatic GitHub caching
+- **Configurable**: Customize sources, models, and content limits
+
+## Quick Start
+
+### For Cursor Users
+
+Add through the [Cursor Directory](https://cursor.directory/mcp/skill-search), or add to your Cursor config (`~/.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "claude-skills": {
+      "command": "uvx",
+      "args": ["skill-search"]
+    }
+  }
+}
+```
+
+The frontend starts instantly and displays tools, automatically downloading and starting the backend in the background (~60-120s due to RAG dependencies, one-time). Subsequent uses are instant.
+
+### Using uvx (Standalone)
+
+Run the server with default configuration:
+
+```bash
+uvx skill-search
+```
+
+This starts the lightweight frontend which auto-downloads the backend and loads ~90 skills from Anthropic's official skills repository and K-Dense AI's scientific skills collection.
+
+### With Custom Configuration
+
+```bash
+# 1. Print the default configuration
+uvx skill-search --example-config > config.json
+
+# 2. Edit config.json to your needs
+
+# 3. Run with your custom configuration
+uvx skill-search --config config.json
+```
+
+## Documentation
+
+- **[Getting Started](docs/getting-started.md)** - Installation, Cursor setup, CLI usage, and troubleshooting
+- **[Architecture Guide](docs/architecture.md)** - Two-package design, data flow, and components
+- **[API Documentation](docs/api.md)** - Tool parameters, examples, and best practices
+- **[Usage Examples](docs/usage.md)** - Advanced configuration, real-world use cases, and custom skill creation
+- **[Testing Guide](docs/testing.md)** - Complete testing instructions, CI/CD, and coverage analysis
+
+## MCP Tools
+
+The server provides three tools for working with Claude Agent Skills:
+
+1. **`find_helpful_skills`** - Semantic search for relevant skills based on task description
+2. **`read_skill_document`** - Retrieve specific files (scripts, data, references) from skills  
+3. **`list_skills`** - View complete inventory of all loaded skills (for exploration/debugging)
+
+See [API Documentation](docs/api.md) for detailed parameters, examples, and best practices.
+
+## Usage within Cognitive Construct
+
+When used as part of the **Cognitive Construct** skill system, this package serves as an **internal library** - not an MCP server exposed to the LLM. The Volition skill wraps the search functionality with an opaque CLI:
+
+```bash
+# Claude sees these skill commands (SKILL.md interface)
+python3 volition.py skill search "debug Python errors"
+python3 volition.py skill read python-debugging
+
+# NOT exposed to Claude:
+# - MCP tool schemas (find_helpful_skills, read_skill_document)
+# - JSON-RPC protocol details
+# - Backend implementation (vector search, embeddings)
+```
+
+This follows the **progressive disclosure** pattern: Claude interacts with high-level skill commands, while the MCP machinery remains hidden as an implementation detail.
+
+For direct MCP server usage (Cursor, Codex, etc.), continue with the instructions below.
+
+## Architecture (v1.0.0)
+
+The system uses a **two-package architecture** for optimal performance:
+
+- **Frontend** ([`skill-search`](https://pypi.org/project/skill-search/)): Lightweight proxy (~15 MB)
+  - Starts instantly (<5 seconds) ✅ **No Cursor timeout!**
+  - Auto-downloads backend on first use
+  - MCP server (stdio) for Cursor
+  
+- **Backend** ([`skill-search-backend`](https://pypi.org/project/skill-search-backend/)): Heavy server (~250 MB)
+  - Vector search with PyTorch & sentence-transformers
+  - MCP server (streamable HTTP)
+  - Auto-installed by frontend OR deployable standalone
+
+**Benefits:**
+- ✅ Solves Cursor timeout issue (frontend starts instantly)
+- ✅ Same simple user experience (`uvx skill-search`)
+- ✅ Backend downloads in background (doesn't block Cursor)
+- ✅ Can connect to remote hosted backend (no local install needed)
+
+See [Architecture Guide](docs/architecture.md) for detailed design and data flow.
+
+## Skill Sources
+
+Load skills from **GitHub repositories** (direct skills or Claude Code plugins) or **local directories**. 
+
+By default, loads from:
+- [Official Anthropic Skills](https://github.com/anthropics/skills) - 15 diverse skills for documents, presentations, web artifacts, and more
+- [K-Dense AI Scientific Skills](https://github.com/K-Dense-AI/claude-scientific-skills) - 78+ specialized skills for bioinformatics, cheminformatics, and scientific analysis
+- Local directory `~/.claude/skills` (if it exists)
+
+## Contributing
+
+Contributions are welcome! To contribute:
+
+1. **Report issues**: [Open an issue](https://github.com/K-Dense-AI/skill-search/issues) for bugs or feature requests
+2. **Submit PRs**: Fork, create a feature branch, ensure tests pass (`uv run pytest tests/`), then submit
+3. **Code style**: Run `uvx ruff check src/` before committing
+4. **Add tests**: New features should include tests
+
+### Development
+
+**Version Management**: This monorepo uses a centralized version system:
+- Edit the `VERSION` file at the repo root to bump the version
+- Run `python3 scripts/sync-version.py` to sync all references (or use `--check` to verify)
+- The `scripts/build-all.sh` script automatically syncs versions before building
+
+For questions, email [orion.li@k-dense.ai](mailto:orion.li@k-dense.ai)
+
+## Join Our Community! 🚀
+
+**We'd love to have you in our Slack community!** Connect with other users, share tips and tricks, get help with your skills, and be the first to know about new features and updates.
+
+👉 **[Join the K-Dense Community on Slack](https://join.slack.com/t/k-densecommunity/shared_invite/zt-3iajtyls1-EwmkwIZk0g_o74311Tkf5g)** 👈
+
+Whether you're building custom skills, integrating with different AI models, or just exploring the possibilities of Agent Skills, our community is here to support you!
+
+## Learn More
+
+- [Agent Skills Documentation](https://docs.claude.com/en/docs/claude-code/skills) - Official Anthropic documentation on the Skills format
+- [Agent Skills Blog Post](https://www.anthropic.com/news/skills) - Announcement and overview
+- [Model Context Protocol](https://modelcontextprotocol.io/) - The protocol that makes cross-platform Skills possible
+- [Engineering Blog: Equipping Agents for the Real World](https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills) - Technical deep-dive on the Skills architecture
+
+## License
+
+This project is licensed under the [Apache License 2.0](LICENSE).
+
+Copyright 2025 K-Dense AI (https://k-dense.ai)
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=K-Dense-AI/skill-search&type=date&legend=top-left)](https://www.star-history.com/#K-Dense-AI/skill-search&type=date&legend=top-left)

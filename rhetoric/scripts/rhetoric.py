@@ -378,6 +378,14 @@ def main():
         parser.print_help()
         sys.exit(1)
 
+    # Check configuration before running
+    try:
+        sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+        from shared.config_check import require_skill_config
+        require_skill_config("rhetoric")
+    except ImportError:
+        pass  # shared module not available, skip check
+
     if args.command == "think":
         asyncio.run(cmd_think(args))
     elif args.command == "deliberate":

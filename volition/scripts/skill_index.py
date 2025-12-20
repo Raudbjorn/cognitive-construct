@@ -50,27 +50,36 @@ class SkillResponse:
 def _init_search_engine():
     """Initialize and cache the search engine (expensive operation).
 
-    Returns tuple of (engine, loader) or None if unavailable.
+    Returns tuple of (engine, skills_by_name) or None if unavailable.
     Cached to avoid re-indexing on every command.
     """
     try:
         # Import from the internal library (no longer exposed as MCP server)
         from claude_skills_mcp_backend.search_engine import SkillSearchEngine
-        from claude_skills_mcp_backend.skill_loader import SkillLoader
-        from claude_skills_mcp_backend.config import load_config
+        from claude_skills_mcp_backend.skill_loader import load_all_skills
+        from claude_skills_mcp_backend.config import load_config, config_to_dict
 
-        config = load_config()
-        loader = SkillLoader(config)
-        skills = loader.load_all_skills()
+        config_result = load_config()
+        if config_result.is_err():
+            logger.error(f"Failed to load config: {config_result.error.message}")
+            return None
 
-        engine = SkillSearchEngine(config.model_name)
+        config = config_result.value
+        config_dict = config_to_dict(config)
+        skill_sources = config_dict["skill_sources"]
+        skills = load_all_skills(skill_sources, config)
+
+        engine = SkillSearchEngine(config.embedding_model)
         result = engine.index_skills(skills)
 
         if result.is_err():
             logger.error(f"Failed to index skills: {result.error}")
             return None
 
-        return engine, loader
+        # Build name→skill lookup for O(1) access
+        skills_by_name = {skill.name: skill for skill in skills}
+
+        return engine, skills_by_name
 
     except ImportError as e:
         logger.error(f"Search engine not available: {e}")
@@ -127,12 +136,12 @@ def cmd_read(args: argparse.Namespace) -> SkillResponse:
             message="Skill search engine unavailable.",
         )
 
-    _, loader = result
+    _, skills_by_name = result
     skill_name = args.skill_name
     document_path = args.document_path
 
-    # Find the skill
-    skill = loader.get_skill_by_name(skill_name)
+    # Find the skill (O(1) lookup)
+    skill = skills_by_name.get(skill_name)
     if skill is None:
         return SkillResponse(
             success=False,
@@ -160,10 +169,10 @@ def cmd_read(args: argparse.Namespace) -> SkillResponse:
             message=f"Document not found: {document_path}",
         )
 
-    doc_info = skill.documents[document_path]
-    content = loader.read_document(skill_name, document_path)
+    # Use skill's get_document() method for lazy-loaded content
+    doc = skill.get_document(document_path)
 
-    if content is None:
+    if doc is None:
         return SkillResponse(
             success=False,
             data=None,
@@ -174,8 +183,8 @@ def cmd_read(args: argparse.Namespace) -> SkillResponse:
         success=True,
         data={
             "path": document_path,
-            "type": doc_info.get("type", "unknown"),
-            "content": content,
+            "type": doc.get("type", "unknown"),
+            "content": doc.get("content"),
         },
         message=f"Loaded document: {document_path}",
     )

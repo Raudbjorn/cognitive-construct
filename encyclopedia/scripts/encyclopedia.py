@@ -84,6 +84,10 @@ SOURCE_PRIORITY = {
 KNOWN_SOURCES = set(SOURCE_PRIORITY.keys())
 
 SOURCE_ROUTING = SOURCE_CONFIG.get("routing", {})
+# Similarity threshold for deduplication. 0.85 provides good balance:
+# - High enough to avoid false positives (distinct results marked as duplicates)
+# - Low enough to catch paraphrased/reformatted duplicates from different sources
+# Derived empirically from testing across Wikipedia, Arxiv, and web sources.
 SIMILARITY_THRESHOLD = SOURCE_CONFIG.get("deduplication", {}).get("similarity_threshold", 0.85)
 QUERY_TIMEOUT = SOURCE_CONFIG.get("timeouts", {}).get("query_timeout_seconds", 10.0)
 TOTAL_TIMEOUT = SOURCE_CONFIG.get("timeouts", {}).get("total_timeout_seconds", 30.0)
@@ -359,7 +363,7 @@ def deduplicate_results(results: list[SearchResult]) -> list[SearchResult]:
     """Deduplicate results using semantic embeddings.
 
     Uses Model2Vec for true semantic similarity instead of string matching.
-    Falls back to keeping all results if embeddings unavailable.
+    Falls back to stdlib SequenceMatcher if embeddings unavailable.
     """
     if not results:
         return []
@@ -383,8 +387,22 @@ def deduplicate_results(results: list[SearchResult]) -> list[SearchResult]:
         return deduplicated
 
     except ImportError:
-        # Fallback: no deduplication if embeddings unavailable
-        return sorted_results
+        # Fallback: use stdlib SequenceMatcher for basic string-based deduplication
+        from difflib import SequenceMatcher
+
+        deduplicated = []
+        for result in sorted_results:
+            is_duplicate = False
+            result_text = f"{result.title} {result.content[:500]}"
+            for kept in deduplicated:
+                kept_text = f"{kept.title} {kept.content[:500]}"
+                ratio = SequenceMatcher(None, result_text, kept_text).ratio()
+                if ratio > SIMILARITY_THRESHOLD:
+                    is_duplicate = True
+                    break
+            if not is_duplicate:
+                deduplicated.append(result)
+        return deduplicated
 
 
 def rank_results_by_query(results: list[SearchResult], query: str) -> list[SearchResult]:

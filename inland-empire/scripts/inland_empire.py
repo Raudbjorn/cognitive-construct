@@ -167,7 +167,7 @@ def _extract_surface_keywords(context: str) -> list[str]:
         if len(w) < 3 or w in _STOPWORDS or w in seen:
             continue
         seen.add(w)
-        keywords.append(word)
+        keywords.append(w)
         if len(keywords) >= _MAX_SURFACE_KEYWORDS:
             break
     return keywords if keywords else [context]
@@ -206,7 +206,7 @@ class BackendConfig:
     libsql_url: str | None = None
     libsql_auth_token: str | None = None
     mem0_api_key: str | None = None
-    postgres_url: str | None = None
+    postgres_url: str | None = None  # Reserved for future self-hosted Mem0 support
     mem0_mode: str | None = None  # "hosted" or None
     session_file: Path | None = None
     state_dir: Path = field(default_factory=Path.cwd)
@@ -347,12 +347,20 @@ class GraphBackend:
                 return Err(MemoryError(result.error.message, result.error.code, "graph"))
 
             deleted = 0
+            failed = 0
             for entity in result.value.entities:
                 if entity_type and entity.entity_type != entity_type:
                     continue
                 del_result = await self._client.delete_entity(entity.name)
                 if del_result.is_ok():
                     deleted += 1
+                else:
+                    failed += 1
+            if failed:
+                return Err(MemoryError(
+                    f"{failed} delete(s) failed after {deleted} success(es)",
+                    "PARTIAL_DELETE_FAILED", "graph",
+                ))
             return Ok(deleted)
         except Exception as e:
             return Err(MemoryError(str(e), "DELETE_FAILED", "graph"))
@@ -458,10 +466,18 @@ class SemanticBackend:
                 )
 
             deleted = 0
+            failed = 0
             for mem in search_result.value.results:
                 del_result = await self._client.delete(mem.id)
                 if del_result.is_ok():
                     deleted += 1
+                else:
+                    failed += 1
+            if failed:
+                return Err(MemoryError(
+                    f"{failed} delete(s) failed after {deleted} success(es)",
+                    "PARTIAL_DELETE_FAILED", "semantic",
+                ))
             return Ok(deleted)
         except Exception as e:
             return Err(MemoryError(str(e), "DELETE_FAILED", "semantic"))

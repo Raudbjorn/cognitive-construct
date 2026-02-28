@@ -149,6 +149,7 @@ Surface results are **hypotheses**, not evidence. They are associative leaps tha
   "status": "ok",
   "command": "surface",
   "result": {
+    "context": "refactoring the payment module",
     "associations": [
       {
         "summary": "Payment webhook timeout issue was caused by missing retry logic",
@@ -161,12 +162,13 @@ Surface results are **hypotheses**, not evidence. They are associative leaps tha
         "relevance": "medium"
       }
     ],
-    "voice": null
+    "voice": null,
+    "partial": false
   }
 }
 ```
 
-The `voice` field, when present, carries an orthogonal reading of the associations — a gut-level interpretation that may be metaphorical, impressionistic, or oblique. It is not a summary of the data above. Treat it as one more associative signal: absorb it, don't paraphrase it.
+The `voice` field is always present but nullable. When non-null, it carries an orthogonal reading of the associations — a gut-level interpretation that may be metaphorical, impressionistic, or oblique. It is not a summary of the data above. Treat it as one more associative signal: absorb it, don't paraphrase it.
 
 ### `forget "<query>"`
 
@@ -276,8 +278,8 @@ All commands return JSON with `"status": "ok"` or `"status": "error"`:
   "status": "error",
   "command": "remember",
   "error": {
-    "message": "Semantic backend unavailable: MEM0_API_KEY not configured",
-    "code": "BACKEND_UNAVAILABLE"
+    "message": "Not initialized",
+    "code": "NOT_INITIALIZED"
   }
 }
 ```

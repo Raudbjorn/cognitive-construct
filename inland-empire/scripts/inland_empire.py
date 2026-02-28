@@ -988,30 +988,94 @@ class InlandEmpire:
                 if result.is_ok():
                     return result.value
                 partial = True
-            except (asyncio.TimeoutError, Exception):
-                partial = True
-            return []
+        # To avoid excessive backend calls, we:
+        #   - normalize and tokenize the context
+        #   - remove common stopwords
+        #   - deduplicate keywords while preserving order
+        #   - cap the total number of keywords searched
+        STOPWORDS = {
+            "the",
+            "and",
+            "for",
+            "with",
+            "that",
+            "this",
+            "from",
+            "have",
+            "has",
+            "had",
+            "but",
+            "not",
+            "are",
+            "was",
+            "were",
+            "you",
+            "your",
+            "their",
+            "them",
+            "they",
+            "our",
+            "out",
+            "about",
+            "into",
+            "over",
+            "under",
+            "also",
+            "just",
+            "like",
+            "can",
+            "could",
+            "would",
+            "should",
+            "will",
+            "shall",
+        }
 
-        # Extract individual keywords for broad matching.
-        # Surface searches each keyword independently, unlike consult which
-        # uses the exact query string. This is the "wide net" behavior.
-        keywords = _extract_surface_keywords(context)
+        # Normalize and tokenize: words only, lowercase.
+        raw_tokens = re.findall(r"\b\w+\b", context.lower())
+        filtered_tokens: list[str] = [
+            w for w in raw_tokens if len(w) >= 3 and w not in STOPWORDS
+        ]
+
+        # Deduplicate while preserving order.
+        seen_keywords: set[str] = set()
+        keywords: list[str] = []
+        for w in filtered_tokens:
+            if w not in seen_keywords:
+                seen_keywords.add(w)
+                keywords.append(w)
+
+        # Cap the number of keywords to avoid exploding network calls.
+        MAX_KEYWORDS = 20
+        keywords = keywords[:MAX_KEYWORDS]
+
+        if not keywords:
+            # Fall back to using the raw context as a single query if
+            # tokenization/stopword filtering yields nothing useful.
+            keywords = [context]
 
         seen: set[str] = set()
 
-        async def _collect(coro: Any) -> None:
-            entries = await _query(coro)
-            for entry in entries:
-                if entry.summary not in seen:
-                    seen.add(entry.summary)
-                    all_entries.append(entry)
+        # Build all backend queries for each keyword and run them concurrently.
+        tasks: list[asyncio.Future | asyncio.Task | Any] = []
 
-        # Query all backends with each keyword, generous limits, no type filtering
         for keyword in keywords:
-            tasks: list[Any] = []
             if self._backend_ok("graph"):
-                tasks.append(_collect(self.graph.search(keyword, limit=20)))
+                tasks.append(_query(self.graph.search(keyword, limit=20)))
+
             if self._semantic_available():
+                tasks.append(_query(self.semantic.search(keyword, limit=20)))
+
+            if self._backend_ok("session"):
+                tasks.append(_query(self.session.search(keyword, limit=10)))
+
+        if tasks:
+            results = await asyncio.gather(*tasks)
+            for entries in results:
+                for entry in entries:
+                    if entry.summary not in seen:
+                        seen.add(entry.summary)
+                        all_entries.append(entry)
                 tasks.append(_collect(self.semantic.search(keyword, limit=20)))
             if self._backend_ok("session"):
                 tasks.append(_collect(self.session.search(keyword, limit=10)))

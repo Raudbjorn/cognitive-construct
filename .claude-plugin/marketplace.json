@@ -16,7 +16,7 @@
     },
     {
       "name": "inland-empire",
-      "description": "Unified memory substrate. Store facts, patterns, and context across LibSQL, Mem0, and session storage. Query with remember, consult, and stats commands.",
+      "description": "Subconscious memory layer. Stores facts, patterns, and context across sessions. Retrieves via direct search (consult) or associative intuition (surface). Commands: remember, consult, surface, forget, stats.",
       "source": "./inland-empire"
     },
     {

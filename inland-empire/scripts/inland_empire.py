@@ -337,25 +337,45 @@ class GraphBackend:
     async def delete_matching(
         self, query: str, entity_type: str | None = None
     ) -> Result:
-        """Delete entities matching query. Returns count deleted."""
+        """Delete entities matching query. Returns count deleted.
+
+        Paginates in batches of 50 to handle large result sets, with a safety
+        cap of 50 iterations to prevent runaway loops.
+        """
         if not self._client:
             return Err(MemoryError("Not initialized", "NOT_INITIALIZED", "graph"))
 
         try:
-            result = await self._client.search_nodes(query, limit=50)
-            if result.is_err():
-                return Err(MemoryError(result.error.message, result.error.code, "graph"))
-
+            batch_limit = 50
             deleted = 0
             failed = 0
-            for entity in result.value.entities:
-                if entity_type and entity.entity_type != entity_type:
-                    continue
-                del_result = await self._client.delete_entity(entity.name)
-                if del_result.is_ok():
-                    deleted += 1
-                else:
-                    failed += 1
+
+            for _ in range(50):  # Safety cap
+                result = await self._client.search_nodes(query, limit=batch_limit)
+                if result.is_err():
+                    return Err(MemoryError(result.error.message, result.error.code, "graph"))
+
+                entities = list(result.value.entities)
+                if not entities:
+                    break
+
+                batch_deleted = 0
+                for entity in entities:
+                    if entity_type and entity.entity_type != entity_type:
+                        continue
+                    del_result = await self._client.delete_entity(entity.name)
+                    if del_result.is_ok():
+                        deleted += 1
+                        batch_deleted += 1
+                    else:
+                        failed += 1
+
+                if batch_deleted == 0:
+                    break  # All filtered by entity_type, avoid infinite loop
+
+                if len(entities) < batch_limit:
+                    break  # No more results
+
             if failed:
                 return Err(MemoryError(
                     f"{failed} delete(s) failed after {deleted} success(es)",
@@ -448,52 +468,45 @@ class SemanticBackend:
             return Err(MemoryError(str(e), "SEARCH_FAILED", "semantic"))
 
     async def delete_matching(self, query: str) -> Result:
-        """Search for matching memories and delete them. Returns count deleted."""
+        """Search for matching memories and delete them. Returns count deleted.
+
+        Paginates in batches of 20 to handle large result sets, with a safety
+        cap of 50 iterations to prevent runaway loops.
+        """
         if not self._client:
             return Err(MemoryError("Not initialized", "NOT_INITIALIZED", "semantic"))
+
+        try:
             batch_size = 20
             deleted = 0
-            max_iterations = 1000  # safety bound to avoid potential infinite loops
-            iterations = 0
+            failed = 0
+            max_iterations = 50
 
-            while True:
-                if iterations >= max_iterations:
-                    # Bail out defensively; return what we've deleted so far
-                    break
-
+            for _ in range(max_iterations):
                 search_result = await self._client.search(
                     query,
                     filters={"user_id": "agent_subconscious"},
                     top_k=batch_size,
                 )
                 if search_result.is_err():
-                    return Err(
-                        MemoryError(
-                            search_result.error.message,
-                            search_result.error.code,
-                            "semantic",
-                        )
-                    )
+                    return Err(MemoryError(
+                        search_result.error.message, search_result.error.code, "semantic",
+                    ))
 
-                results = list(search_result.value.results)
-                if not results:
+                batch = list(search_result.value.results)
+                if not batch:
                     break
 
-                for mem in results:
+                for mem in batch:
                     del_result = await self._client.delete(mem.id)
                     if del_result.is_ok():
                         deleted += 1
+                    else:
+                        failed += 1
 
-                if len(results) < batch_size:
-                    # Fewer than batch_size results means we've drained matches.
-                    break
+                if len(batch) < batch_size:
+                    break  # No more results to fetch
 
-                iterations += 1
-                del_result = await self._client.delete(mem.id)
-                if del_result.is_ok():
-                    deleted += 1
-                else:
-                    failed += 1
             if failed:
                 return Err(MemoryError(
                     f"{failed} delete(s) failed after {deleted} success(es)",
@@ -987,99 +1000,31 @@ class InlandEmpire:
                 if result.is_ok():
                     return result.value
                 partial = True
-        # To avoid excessive backend calls, we:
-        #   - normalize and tokenize the context
-        #   - remove common stopwords
-        #   - deduplicate keywords while preserving order
-        #   - cap the total number of keywords searched
-        STOPWORDS = {
-            "the",
-            "and",
-            "for",
-            "with",
-            "that",
-            "this",
-            "from",
-            "have",
-            "has",
-            "had",
-            "but",
-            "not",
-            "are",
-            "was",
-            "were",
-            "you",
-            "your",
-            "their",
-            "them",
-            "they",
-            "our",
-            "out",
-            "about",
-            "into",
-            "over",
-            "under",
-            "also",
-            "just",
-            "like",
-            "can",
-            "could",
-            "would",
-            "should",
-            "will",
-            "shall",
-        }
+            except (asyncio.TimeoutError, Exception):
+                partial = True
+            return []
 
-        # Normalize and tokenize: words only, lowercase.
-        raw_tokens = re.findall(r"\b\w+\b", context.lower())
-        filtered_tokens: list[str] = [
-            w for w in raw_tokens if len(w) >= 3 and w not in STOPWORDS
-        ]
-
-        # Deduplicate while preserving order.
-        seen_keywords: set[str] = set()
-        keywords: list[str] = []
-        for w in filtered_tokens:
-            if w not in seen_keywords:
-                seen_keywords.add(w)
-                keywords.append(w)
-
-        # Cap the number of keywords to avoid exploding network calls.
-        MAX_KEYWORDS = 20
-        keywords = keywords[:MAX_KEYWORDS]
-
-        if not keywords:
-            # Fall back to using the raw context as a single query if
-            # tokenization/stopword filtering yields nothing useful.
-            keywords = [context]
-
+        # Extract keywords and build all backend queries across all keywords,
+        # then run them in a single asyncio.gather for full parallelism.
+        keywords = _extract_surface_keywords(context)
         seen: set[str] = set()
-
-        # Build all backend queries for each keyword and run them concurrently.
-        tasks: list[asyncio.Future | asyncio.Task | Any] = []
+        tasks: list[Any] = []
 
         for keyword in keywords:
             if self._backend_ok("graph"):
                 tasks.append(_query(self.graph.search(keyword, limit=20)))
-
             if self._semantic_available():
                 tasks.append(_query(self.semantic.search(keyword, limit=20)))
-
             if self._backend_ok("session"):
                 tasks.append(_query(self.session.search(keyword, limit=10)))
 
         if tasks:
-            results = await asyncio.gather(*tasks)
-            for entries in results:
+            batch_results = await asyncio.gather(*tasks)
+            for entries in batch_results:
                 for entry in entries:
                     if entry.summary not in seen:
                         seen.add(entry.summary)
                         all_entries.append(entry)
-                tasks.append(_collect(self.semantic.search(keyword, limit=20)))
-            if self._backend_ok("session"):
-                tasks.append(_collect(self.session.search(keyword, limit=10)))
-            if tasks:
-                await asyncio.gather(*tasks)
 
         # Tag relevance based on score (semantic) or position (others)
         associations = []

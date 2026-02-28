@@ -98,8 +98,7 @@ python3 scripts/inland_empire.py consult "user preferences" --depth deep
   "result": {
     "query": "authentication",
     "depth": "shallow",
-    "query": "user preferences",
-    "depth": "deep",
+    "results": [
       {
         "summary": "The auth flow has a race condition on concurrent logins",
         "type": "pattern",

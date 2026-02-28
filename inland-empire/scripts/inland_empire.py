@@ -142,6 +142,37 @@ def content_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
 
 
+# Common English stopwords to skip when extracting surface keywords
+_STOPWORDS = frozenset({
+    "the", "and", "for", "are", "but", "not", "you", "all", "can", "had",
+    "her", "was", "one", "our", "out", "has", "have", "been", "from",
+    "that", "this", "they", "with", "what", "when", "will", "how", "who",
+    "which", "their", "about", "into", "than", "them", "then", "some",
+    "these", "would", "other", "could", "after", "also",
+})
+
+_MAX_SURFACE_KEYWORDS = 10
+
+
+def _extract_surface_keywords(context: str) -> list[str]:
+    """Extract deduplicated keywords from context for surface queries.
+
+    Filters stopwords, deduplicates, and caps at _MAX_SURFACE_KEYWORDS to
+    avoid excessive backend queries on long context strings.
+    """
+    seen: set[str] = set()
+    keywords: list[str] = []
+    for word in context.split():
+        w = word.lower().strip(".,;:!?\"'()[]{}—-")
+        if len(w) < 3 or w in _STOPWORDS or w in seen:
+            continue
+        seen.add(w)
+        keywords.append(word)
+        if len(keywords) >= _MAX_SURFACE_KEYWORDS:
+            break
+    return keywords if keywords else [context]
+
+
 # === Duration Parsing ===
 
 _DURATION_RE = re.compile(r"^(\d+)([dhms])$")
@@ -634,19 +665,24 @@ class VoiceLayer:
     """Associative voice synthesis via Mercury diffusion LLM.
 
     Generates an oblique, impressionistic reading of surfaced associations.
-    Degrades silently to None when INCEPTION_API_KEY is not set or the API
-    is unreachable.
+    Degrades gracefully to None when INCEPTION_API_KEY is not set or the API
+    is unreachable — errors are logged to stderr for debuggability.
     """
 
     def __init__(self, api_key: str | None) -> None:
         self._api_key = api_key
-        self._available = bool(api_key)
+        self._is_available = bool(api_key)
+
+    @property
+    def available(self) -> bool:
+        """Whether the voice layer is configured and available."""
+        return self._is_available
 
     async def generate(
         self, associations: list[dict[str, Any]], context: str
     ) -> str | None:
         """Generate a voice reading. Returns None if unavailable or on error."""
-        if not self._available or not associations:
+        if not self._is_available or not associations:
             return None
 
         # Cap associations to avoid oversized prompts
@@ -690,12 +726,14 @@ class VoiceLayer:
                 IndexError,
                 json.JSONDecodeError,
                 OSError,
-            ):
+            ) as exc:
+                print(f"[inland-empire] voice layer error: {exc}", file=sys.stderr)
                 return None
 
         try:
             return await asyncio.to_thread(_call)
-        except Exception:
+        except Exception as exc:
+            print(f"[inland-empire] voice layer error: {exc}", file=sys.stderr)
             return None
 
 
@@ -728,6 +766,15 @@ class InlandEmpire:
         """Check if a backend initialized successfully."""
         result = self._init_results.get(name)
         return result is not None and result.is_ok()
+
+    def _backend_failed(self, name: str) -> bool:
+        """Check if a backend was attempted but failed to initialize.
+
+        Distinguishes init failures (partial=True) from "not configured"
+        (e.g., semantic without MEM0_API_KEY is expected, not a failure).
+        """
+        result = self._init_results.get(name)
+        return result is not None and result.is_err()
 
     def _semantic_available(self) -> bool:
         """Check if semantic backend is configured and initialized."""
@@ -822,6 +869,8 @@ class InlandEmpire:
                         self.graph.search(query, limit=limit, entity_type="fact")
                     )
                 )
+            elif self._backend_failed("graph"):
+                partial = True
 
         # Query patterns from semantic (or graph fallback)
         if memory_type is None or memory_type == MemoryType.PATTERN:
@@ -835,6 +884,8 @@ class InlandEmpire:
                         self.graph.search(query, limit=limit, entity_type="pattern")
                     )
                 )
+            elif self._backend_failed("semantic"):
+                partial = True
 
         # Query context from session
         if memory_type is None or memory_type == MemoryType.CONTEXT:
@@ -842,6 +893,8 @@ class InlandEmpire:
                 all_entries.extend(
                     await _query_backend(self.session.search(query, limit=limit))
                 )
+            elif self._backend_failed("session"):
+                partial = True
 
         results = [
             {
@@ -904,9 +957,7 @@ class InlandEmpire:
         # Extract individual keywords for broad matching.
         # Surface searches each keyword independently, unlike consult which
         # uses the exact query string. This is the "wide net" behavior.
-        keywords = [w for w in context.split() if len(w) >= 3]
-        if not keywords:
-            keywords = [context]
+        keywords = _extract_surface_keywords(context)
 
         seen: set[str] = set()
 
@@ -1194,7 +1245,7 @@ class InlandEmpire:
             }
 
         # Voice (Layer 2)
-        if self.voice._available:
+        if self.voice.available:
             backends["voice"] = {
                 "status": "available",
                 "model": VOICE_MODEL,

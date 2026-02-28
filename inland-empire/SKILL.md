@@ -87,7 +87,7 @@ python3 scripts/inland_empire.py consult "user preferences" --depth deep
 ```
 
 **Options:**
-- `--depth shallow|deep`: Controls result count (shallow: 5, deep: 20)
+- `--depth shallow|deep`: Controls result count per backend (shallow: 5, deep: 20)
 - `--type fact|pattern|context`: Filter to one memory type
 
 **Response:**
@@ -97,6 +97,7 @@ python3 scripts/inland_empire.py consult "user preferences" --depth deep
   "command": "consult",
   "result": {
     "query": "authentication",
+    "depth": "shallow",
     "results": [
       {
         "summary": "The auth flow has a race condition on concurrent logins",
@@ -228,7 +229,7 @@ Inland Empire unifies multiple backends behind a single interface. The user neve
 
 **Backend detection** (from environment):
 - **Graph**: Always available. Uses `LIBSQL_URL` if set, otherwise local SQLite.
-- **Semantic**: Requires `MEM0_API_KEY` (hosted) or `POSTGRES_URL` (self-hosted). Gracefully disabled when neither is set — patterns stored in graph as fallback.
+- **Semantic**: Requires `MEM0_API_KEY`. Gracefully disabled when not set — patterns stored in graph as fallback.
 - **Session**: Always available. Local JSONL file in `INLAND_EMPIRE_STATE_DIR`.
 
 ## When to Use
@@ -262,7 +263,7 @@ Inland Empire integrates with other Cognitive Construct skills:
 | `LIBSQL_URL` | Graph database URL | `file:./memory-tool.db` (local) |
 | `LIBSQL_AUTH_TOKEN` | Remote Turso auth | (none) |
 | `MEM0_API_KEY` | Mem0 Cloud API key | (none — semantic backend disabled) |
-| `POSTGRES_URL` | Self-hosted Mem0 | (none) |
+| `POSTGRES_URL` | Self-hosted Mem0 (reserved, not yet supported) | (none) |
 | `INCEPTION_API_KEY` | Mercury diffusion LLM key (voice layer) | (none — voice disabled) |
 | `INLAND_EMPIRE_STATE_DIR` | Storage directory override | current directory |
 

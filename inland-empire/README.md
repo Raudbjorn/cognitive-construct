@@ -47,7 +47,7 @@ Inland Empire unifies multiple backends behind a single interface. You never sel
 
 **Backend detection** (from environment):
 - **Graph**: Always available. Uses `LIBSQL_URL` if set, otherwise local SQLite.
-- **Semantic**: Requires `MEM0_API_KEY` (hosted) or `POSTGRES_URL` (self-hosted). When disabled, patterns fall back to the graph backend.
+- **Semantic**: Requires `MEM0_API_KEY`. When disabled, patterns fall back to the graph backend.
 - **Session**: Always available. Local JSONL file.
 
 ## Commands
@@ -86,7 +86,7 @@ python3 scripts/inland_empire.py consult "user preferences" --depth deep --type 
 ```
 
 **Options:**
-- `--depth shallow|deep`: Result count (shallow: 5, deep: 20)
+- `--depth shallow|deep`: Result count per backend (shallow: 5, deep: 20)
 - `--type fact|pattern|context`: Filter to one memory type
 
 ### `surface "<context>"`
@@ -132,7 +132,7 @@ python3 scripts/inland_empire.py stats
 | `LIBSQL_URL` | Graph database URL | `file:./memory-tool.db` (local) |
 | `LIBSQL_AUTH_TOKEN` | Remote Turso auth | (none) |
 | `MEM0_API_KEY` | Mem0 Cloud API key | (none — semantic disabled) |
-| `POSTGRES_URL` | Self-hosted Mem0 | (none) |
+| `POSTGRES_URL` | Self-hosted Mem0 (reserved, not yet supported) | (none) |
 | `INCEPTION_API_KEY` | Voice layer API key (Mercury diffusion LLM) | (none — voice disabled) |
 | `INLAND_EMPIRE_STATE_DIR` | Storage directory override | current directory |
 

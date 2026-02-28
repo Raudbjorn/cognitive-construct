@@ -197,7 +197,7 @@ python3 scripts/inland_empire.py stats
   "command": "stats",
   "result": {
     "version": "2.1.0",
-    "backends": {
+    "version": "2.1.0",
       "graph": {"status": "available", "mode": "local"},
       "semantic": {"status": "available", "mode": "hosted"},
       "session": {"status": "available", "entries": 42},

@@ -88,7 +88,7 @@ python3 scripts/inland_empire.py consult "user preferences" --depth deep
 
 **Options:**
 - `--depth shallow|deep`: Controls result count per backend (shallow: 5, deep: 20)
-- `--type fact|pattern|context`: Filter to one memory type
+- `--depth shallow|deep`: Controls per-backend result count (shallow: up to 5 results per backend, deep: up to 20 results per backend). The merged results list may contain more than 5 or 20 total items when multiple backends are enabled.
 
 **Response:**
 ```json

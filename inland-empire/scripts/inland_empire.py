@@ -451,23 +451,44 @@ class SemanticBackend:
         """Search for matching memories and delete them. Returns count deleted."""
         if not self._client:
             return Err(MemoryError("Not initialized", "NOT_INITIALIZED", "semantic"))
-
-        try:
-            search_result = await self._client.search(
-                query,
-                filters={"user_id": "agent_subconscious"},
-                top_k=20,
-            )
-            if search_result.is_err():
-                return Err(
-                    MemoryError(
-                        search_result.error.message, search_result.error.code, "semantic"
-                    )
-                )
-
+            batch_size = 20
             deleted = 0
-            failed = 0
-            for mem in search_result.value.results:
+            max_iterations = 1000  # safety bound to avoid potential infinite loops
+            iterations = 0
+
+            while True:
+                if iterations >= max_iterations:
+                    # Bail out defensively; return what we've deleted so far
+                    break
+
+                search_result = await self._client.search(
+                    query,
+                    filters={"user_id": "agent_subconscious"},
+                    top_k=batch_size,
+                )
+                if search_result.is_err():
+                    return Err(
+                        MemoryError(
+                            search_result.error.message,
+                            search_result.error.code,
+                            "semantic",
+                        )
+                    )
+
+                results = list(search_result.value.results)
+                if not results:
+                    break
+
+                for mem in results:
+                    del_result = await self._client.delete(mem.id)
+                    if del_result.is_ok():
+                        deleted += 1
+
+                if len(results) < batch_size:
+                    # Fewer than batch_size results means we've drained matches.
+                    break
+
+                iterations += 1
                 del_result = await self._client.delete(mem.id)
                 if del_result.is_ok():
                     deleted += 1

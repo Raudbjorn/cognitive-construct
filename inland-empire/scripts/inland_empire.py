@@ -176,7 +176,7 @@ class BackendConfig:
     libsql_auth_token: str | None = None
     mem0_api_key: str | None = None
     postgres_url: str | None = None
-    mem0_mode: str | None = None  # "hosted", "self-hosted", or None
+    mem0_mode: str | None = None  # "hosted" or None
     session_file: Path | None = None
     state_dir: Path = field(default_factory=Path.cwd)
     inception_api_key: str | None = None
@@ -191,8 +191,6 @@ def detect_backends() -> BackendConfig:
     mem0_mode: str | None = None
     if mem0_api_key:
         mem0_mode = "hosted"
-    elif postgres_url:
-        mem0_mode = "self-hosted"
 
     return BackendConfig(
         libsql_url=os.environ.get("LIBSQL_URL"),
@@ -348,6 +346,11 @@ class SemanticBackend:
         """Initialize the Mem0 client."""
         if not self.config.mem0_mode:
             return Err(MemoryError("Not configured", "NOT_CONFIGURED", "semantic"))
+        if not self.config.mem0_api_key:
+            return Err(MemoryError(
+                "MEM0_API_KEY required for semantic backend",
+                "MISSING_API_KEY", "semantic",
+            ))
 
         try:
             try:
@@ -646,7 +649,9 @@ class VoiceLayer:
         if not self._available or not associations:
             return None
 
-        summaries = [a["summary"] for a in associations]
+        # Cap associations to avoid oversized prompts
+        capped = associations[:15]
+        summaries = [a["summary"][:200] for a in capped]
         numbered = " ".join(f"({i + 1}) {s}" for i, s in enumerate(summaries))
         user_content = (
             f"These memories surfaced: {numbered}. "
@@ -914,14 +919,15 @@ class InlandEmpire:
 
         # Query all backends with each keyword, generous limits, no type filtering
         for keyword in keywords:
+            tasks: list[Any] = []
             if self._backend_ok("graph"):
-                await _collect(self.graph.search(keyword, limit=20))
-
+                tasks.append(_collect(self.graph.search(keyword, limit=20)))
             if self._semantic_available():
-                await _collect(self.semantic.search(keyword, limit=20))
-
+                tasks.append(_collect(self.semantic.search(keyword, limit=20)))
             if self._backend_ok("session"):
-                await _collect(self.session.search(keyword, limit=10))
+                tasks.append(_collect(self.session.search(keyword, limit=10)))
+            if tasks:
+                await asyncio.gather(*tasks)
 
         # Tag relevance based on score (semantic) or position (others)
         associations = []
@@ -979,6 +985,8 @@ class InlandEmpire:
         """Selectively remove memories.
 
         When both query and --before are provided, uses AND semantics.
+        Note: --before only applies to session/context memories (graph and
+        semantic backends lack per-entry timestamps).
         """
         await self._ensure_init()
 
@@ -1011,6 +1019,7 @@ class InlandEmpire:
             return await self._forget_dry_run(query, memory_type, before_dt)
 
         total_deleted = 0
+        errors: list[dict[str, Any]] = []
 
         # Delete from graph (facts and fallback patterns)
         if memory_type is None or memory_type in (MemoryType.FACT, MemoryType.PATTERN):
@@ -1019,6 +1028,12 @@ class InlandEmpire:
                 result = await self.graph.delete_matching(query, entity_type=et)
                 if result.is_ok():
                     total_deleted += result.value
+                elif result.is_err():
+                    errors.append({
+                        "backend": "graph",
+                        "message": result.error.message,
+                        "code": result.error.code,
+                    })
 
         # Delete from semantic (patterns)
         if memory_type is None or memory_type == MemoryType.PATTERN:
@@ -1026,8 +1041,15 @@ class InlandEmpire:
                 result = await self.semantic.delete_matching(query)
                 if result.is_ok():
                     total_deleted += result.value
+                elif result.is_err():
+                    errors.append({
+                        "backend": "semantic",
+                        "message": result.error.message,
+                        "code": result.error.code,
+                    })
 
         # Delete from session (context)
+        # Note: --before filter only applies to session (graph/semantic lack timestamps)
         if memory_type is None or memory_type == MemoryType.CONTEXT:
             if self._backend_ok("session"):
                 result = await self.session.delete_matching(
@@ -1035,6 +1057,23 @@ class InlandEmpire:
                 )
                 if result.is_ok():
                     total_deleted += result.value
+                elif result.is_err():
+                    errors.append({
+                        "backend": "session",
+                        "message": result.error.message,
+                        "code": result.error.code,
+                    })
+
+        if errors:
+            return {
+                "status": "error",
+                "command": "forget",
+                "error": {
+                    "message": f"Partial failure: {len(errors)} backend(s) failed",
+                    "code": "PARTIAL_FAILURE",
+                },
+                "result": {"deleted": total_deleted, "errors": errors},
+            }
 
         return {
             "status": "ok",
@@ -1140,7 +1179,7 @@ class InlandEmpire:
         else:
             backends["semantic"] = {
                 "status": "disabled",
-                "reason": "MEM0_API_KEY or POSTGRES_URL not set",
+                "reason": "MEM0_API_KEY not set",
             }
 
         # Session
@@ -1247,7 +1286,7 @@ def parse_args() -> argparse.Namespace:
         "--before",
         "-b",
         default=None,
-        help="Forget entries older than duration (e.g., 7d, 24h)",
+        help="Forget session entries older than duration (e.g., 7d, 24h). Only applies to context memories.",
     )
     fgt.add_argument(
         "--dry-run",

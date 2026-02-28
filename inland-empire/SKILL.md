@@ -72,8 +72,7 @@ python3 scripts/inland_empire.py remember "Flaky test in CI every Monday" --type
   "command": "remember",
   "result": {
     "stored": true,
-    "inferred_type": "fact",
-    "backend": "graph"
+    "inferred_type": "fact"
   }
 }
 ```
@@ -196,11 +195,12 @@ python3 scripts/inland_empire.py stats
   "status": "ok",
   "command": "stats",
   "result": {
-    "version": "2.0.0",
+    "version": "2.1.0",
     "backends": {
       "graph": {"status": "available", "mode": "local"},
       "semantic": {"status": "available", "mode": "hosted"},
-      "session": {"status": "available", "entries": 42}
+      "session": {"status": "available", "entries": 42},
+      "voice": {"status": "available", "model": "mercury-small", "provider": "inception"}
     }
   }
 }

@@ -37,7 +37,7 @@ Inland Empire unifies multiple backends behind a single interface. You never sel
                        │        │        │
                 ┌──────▼──┐ ┌───▼────┐ ┌─▼──────────┐
                 │  Graph  │ │Semantic│ │  Session    │
-                │ (facts) │ │(pattrn)│ │ (context)   │
+                │ (facts) │ │(pattern)│ │(context)   │
                 ├─────────┤ ├────────┤ ├─────────────┤
                 │ LibSQL  │ │  Mem0  │ │    JSONL    │
                 │ SQLite  │ │ Cloud  │ │    local    │
@@ -133,6 +133,7 @@ python3 scripts/inland_empire.py stats
 | `LIBSQL_AUTH_TOKEN` | Remote Turso auth | (none) |
 | `MEM0_API_KEY` | Mem0 Cloud API key | (none — semantic disabled) |
 | `POSTGRES_URL` | Self-hosted Mem0 | (none) |
+| `INCEPTION_API_KEY` | Voice layer API key (Mercury diffusion LLM) | (none — voice disabled) |
 | `INLAND_EMPIRE_STATE_DIR` | Storage directory override | current directory |
 
 ## Error Handling
@@ -144,13 +145,13 @@ All commands return JSON with `"status": "ok"` or `"status": "error"`:
   "status": "error",
   "command": "remember",
   "error": {
-    "message": "Semantic backend unavailable: MEM0_API_KEY not configured",
-    "code": "BACKEND_UNAVAILABLE"
+    "message": "Not initialized",
+    "code": "NOT_INITIALIZED"
   }
 }
 ```
 
-Backend failures are isolated — if one backend fails, others still return results. The `partial` flag in responses indicates incomplete results.
+Backend failures are isolated — if one backend fails, others still return results. The `partial` flag in responses indicates incomplete results. When the semantic backend is unavailable, patterns fall back to graph storage automatically.
 
 ## Directory Structure
 

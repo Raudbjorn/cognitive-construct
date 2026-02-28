@@ -37,7 +37,7 @@ Inland Empire unifies multiple backends behind a single interface. You never sel
                        │        │        │
                 ┌──────▼──┐ ┌───▼────┐ ┌─▼──────────┐
                 │  Graph  │ │Semantic│ │  Session    │
-                │ (facts) │ │(pattern)│ │(context)   │
+                │ (facts) │ │(pattern)│ │ (context)   │
                 ├─────────┤ ├────────┤ ├─────────────┤
                 │ LibSQL  │ │  Mem0  │ │    JSONL    │
                 │ SQLite  │ │ Cloud  │ │    local    │

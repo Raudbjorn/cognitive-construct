@@ -758,7 +758,6 @@ class VoiceLayer:
                     content = data["choices"][0]["message"]["content"]
                     return content.strip() if content else None
             except (
-            except (
                 urllib.error.URLError,
                 KeyError,
                 IndexError,

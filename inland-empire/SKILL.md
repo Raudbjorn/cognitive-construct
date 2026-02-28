@@ -1,13 +1,15 @@
 ---
 name: inland-empire
-description: Unified memory substrate. Store facts, patterns, and context. Query with remember, consult, and stats commands.
+description: >-
+  Subconscious memory layer. Absorbs observations, surfaces associative memories
+  as hypotheses, and builds context across sessions. Commands: remember, consult,
+  surface, forget, stats.
 license: MIT
 metadata:
-  version: 1.0.0
+  version: 2.1.0
   dependencies:
     required:
       - memory_libsql
-      - memory_graph
     optional:
       - openmemory
   env_vars:
@@ -17,125 +19,266 @@ metadata:
       - LIBSQL_AUTH_TOKEN
       - MEM0_API_KEY
       - POSTGRES_URL
+      - INCEPTION_API_KEY
       - INLAND_EMPIRE_STATE_DIR
-      - INLAND_EMPIRE_EVENT_HOME
-membrane:
-  version: 1
-  absorbs:
-    - event_type: action.completed
-      priority: normal
-    - event_type: rhetoric.pattern.detected
-      priority: normal
-    - event_type: feedback.useful
-      priority: high
-    - event_type: feedback.not_useful
-      priority: high
-  emits:
-    - event_type: memory.fact.stored
-    - event_type: memory.pattern.stored
-    - event_type: memory.context.stored
-    - event_type: memory.consulted
-    - event_type: memory.evicted
-  rate_limits:
-    max_absorb_per_minute: 100
-    max_emit_per_minute: 50
 ---
 
 # Inland Empire
 
 > "This is your gut feeling. The raw data of the soul. When logic fails, consult the Empire."
 
-## Capabilities
+## What It Is
 
-The **Inland Empire** unifies three memory backends but only exposes sanitized aliases
-(`fact_memory`, `pattern_memory`, `context_memory`). Internals (MCP, mem0, JSONL) are hidden.
+Inland Empire is the **subconscious memory** of the Cognitive Construct. It does not merely store and retrieve — it *absorbs* observations, *associates* related memories, and *surfaces* relevant context without being asked.
 
-| Alias | Memory Type | Backend | Storage | Notes |
-|-------|-------------|---------|---------|-------|
-| `fact_memory` | `fact` | mcp-memory-libsql | Graph entities/relations | Defaults to local SQLite fallback |
-| `pattern_memory` | `pattern` | mem0 | Hosted API (MEM0_API_KEY) or self-hosted Postgres (POSTGRES_URL) |
-| `context_memory` | `context` | JSONL | Local file (session_memory.jsonl) | Always available |
+Where other memory tools are filing cabinets, Inland Empire is a gut feeling that interrupts you mid-thought: *"This reminds me of something..."*
 
-### Backend detection
-- **mem0 hosted**: `MEM0_API_KEY` present
-- **mem0 self-hosted**: `POSTGRES_URL` present
-- **mem0 disabled**: neither credential; pattern memory gracefully skipped
-- `LIBSQL_URL` optional; if missing, a local SQLite file powers fact memory
-- `INLAND_EMPIRE_STATE_DIR` overrides the storage directory (tests, sandboxes, multi-project)
+Inland Empire speaks in **two registers**. When you `consult`, it behaves like a colleague's research — returning evidence you evaluate on its merits. When you `surface`, it behaves like a colleague's hunch — an associative leap that may not be literally true but points toward something your conscious reasoning missed.
 
-## Commands
+This distinction matters for how you *receive* output. Consult results are data to verify. Surface associations are hypotheses to hold lightly — provocations that should inflect your thinking even when they don't directly answer your question.
 
-### remember
-Store a memory across configured backends.
+## How It Works
+
+You interact through five commands. Inland Empire handles storage, routing, and retrieval internally — you never specify backends or worry about where memories live.
+
+### `remember "<text>"`
+
+Commit something to memory. Inland Empire classifies it automatically and stores it in the appropriate backend.
 
 ```bash
-python3 inland-empire.py remember "<text>" [--type fact|pattern|context]
+python3 scripts/inland_empire.py remember "User prefers verbose error messages"
+python3 scripts/inland_empire.py remember "The auth flow has a race condition on concurrent logins"
+python3 scripts/inland_empire.py remember "Currently debugging the payment webhook timeout"
 ```
 
-**Examples:**
+Inland Empire infers the memory type from content:
+
+| Inferred Type | What It Looks Like | Storage |
+|---|---|---|
+| **fact** | Stable knowledge, preferences, decisions | Structured graph (LibSQL) |
+| **pattern** | Recurring observations, behaviors, tendencies | Semantic memory (Mem0) |
+| **context** | Session-specific notes, transient state | Local session file (JSONL) |
+
+The `--type` flag exists as an override but should rarely be needed:
+
 ```bash
-python3 inland-empire.py remember "User prefers verbose error messages"
-python3 inland-empire.py remember "The auth flow has race conditions" --type pattern
+python3 scripts/inland_empire.py remember "Flaky test in CI every Monday" --type pattern
 ```
 
-### consult
-Query stored memories with optional depth and type filters. Results contain backend aliases,
-partial-result indicators, and normalized metadata.
+**Response:**
+```json
+{
+  "status": "ok",
+  "command": "remember",
+  "result": {
+    "stored": true,
+    "inferred_type": "fact",
+    "backend": "graph"
+  }
+}
+```
+
+### `consult "<query>"`
+
+Actively search memory. Queries all available backends and returns results ranked by relevance.
 
 ```bash
-python3 inland-empire.py consult "<query>" [--depth shallow|deep] [--type fact|pattern|context]
+python3 scripts/inland_empire.py consult "authentication"
+python3 scripts/inland_empire.py consult "user preferences" --depth deep
 ```
 
-**Example:**
-```bash
-python3 inland-empire.py consult "user preferences" --depth deep --type pattern
-```
+**Options:**
+- `--depth shallow|deep`: Controls result count (shallow: 5, deep: 20)
+- `--type fact|pattern|context`: Filter to one memory type
 
-**Response shape**
+**Response:**
 ```json
 {
   "status": "ok",
   "command": "consult",
   "result": {
-    "query": "user preferences",
-    "depth": "deep",
+    "query": "authentication",
     "results": [
       {
-        "origin": "pattern",
-        "summary": "User prefers verbose error messages",
-        "score": 0.812,
-        "observed_at": null,
-        "backend": "pattern_memory",
-        "partial": false,
-        "metadata": {
-          "id": "mem0_123",
-          "user_id": "agent_subconscious",
-          "created_at": "2024-01-15T10:30:00Z",
-          "updated_at": "2024-01-15T10:30:00Z",
-          "mode": "hosted"
-        }
+        "summary": "The auth flow has a race condition on concurrent logins",
+        "type": "pattern",
+        "score": 0.87,
+        "observed_at": "2025-12-10T14:30:00Z"
+      },
+      {
+        "summary": "Auth service runs on port 8080 behind nginx proxy",
+        "type": "fact",
+        "score": null,
+        "observed_at": null
       }
     ],
-    "metadata": {
-      "requested_backends": ["fact_memory", "pattern_memory"],
-      "completed_backends": ["pattern_memory"],
-      "timed_out_backends": ["fact_memory"],
-      "partial": true
+    "partial": false
+  }
+}
+```
+
+The `partial` flag indicates whether any backend timed out or was unavailable. When `true`, results may be incomplete.
+
+Consult results are **evidence** — evaluate them the way you'd evaluate search results. Check relevance, check recency, use or discard.
+
+### `surface "<context>"`
+
+Ask Inland Empire what it associates with the current situation. Unlike `consult` (which searches for specific terms), `surface` casts a wide net across all memory types looking for anything tangentially relevant.
+
+This is the "gut feeling" command — use it when starting a new task, returning from a break, or when something feels familiar but you can't place it.
+
+```bash
+python3 scripts/inland_empire.py surface "refactoring the payment module"
+```
+
+#### Interpreting Associations
+
+Surface results are **hypotheses**, not evidence. They are associative leaps that may be metaphorical, tangential, or wrong — but they point toward something your linear reasoning may have missed.
+
+1. **Look for the hidden thread.** Three associations that seem unrelated often share an underlying pattern. The connection between them is the signal, not any individual result.
+2. **Let associations inflect your thinking** even when the topic doesn't obviously match. A surfaced memory about DNS failures while you're debugging payments isn't noise — it's saying *"this has the shape of a resolution problem."*
+3. **Hold relevance scores lightly.** A `medium` relevance association may be the most important one. The scoring reflects semantic distance, not diagnostic value.
+
+**Wrong:** *"Inland Empire surfaced 3 memories: [list each one with summary]."*
+
+**Right:** *"The surfaced associations share a pattern — they all involve systems that failed silently at integration boundaries. This payment refactor touches two integration boundaries."*
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "command": "surface",
+  "result": {
+    "associations": [
+      {
+        "summary": "Payment webhook timeout issue was caused by missing retry logic",
+        "type": "pattern",
+        "relevance": "high"
+      },
+      {
+        "summary": "User prefers explicit error types over generic exceptions",
+        "type": "fact",
+        "relevance": "medium"
+      }
+    ],
+    "voice": null
+  }
+}
+```
+
+The `voice` field, when present, carries an orthogonal reading of the associations — a gut-level interpretation that may be metaphorical, impressionistic, or oblique. It is not a summary of the data above. Treat it as one more associative signal: absorb it, don't paraphrase it.
+
+### `forget "<query>"`
+
+Selectively remove memories. Useful for clearing stale context, correcting wrong information, or pruning noise.
+
+```bash
+python3 scripts/inland_empire.py forget "payment webhook timeout"
+python3 scripts/inland_empire.py forget --type context --before 7d
+```
+
+**Options:**
+- `--type fact|pattern|context`: Restrict to one memory type
+- `--before <duration>`: Forget entries older than duration (e.g., `7d`, `30d`)
+- `--dry-run`: Show what would be forgotten without deleting
+
+### `stats`
+
+Backend health and memory statistics.
+
+```bash
+python3 scripts/inland_empire.py stats
+```
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "command": "stats",
+  "result": {
+    "version": "2.0.0",
+    "backends": {
+      "graph": {"status": "available", "mode": "local"},
+      "semantic": {"status": "available", "mode": "hosted"},
+      "session": {"status": "available", "entries": 42}
     }
   }
 }
 ```
 
-### stats
-Display backend health, detection mode, and basic counts (context entries).
+## Storage Architecture
 
-```bash
-python3 inland-empire.py stats
+Inland Empire unifies multiple backends behind a single interface. The user never selects a backend — routing is internal.
+
+```text
+                  ┌─────────────────────────┐
+                  │     Inland Empire        │
+                  │   (classify + route)     │
+                  └────┬────────┬────────┬───┘
+                       │        │        │
+                ┌──────▼──┐ ┌───▼────┐ ┌─▼──────────┐
+                │  Graph  │ │Semantic│ │  Session    │
+                │ (facts) │ │(patterns)│ │ (context)  │
+                ├─────────┤ ├────────┤ ├────────────┤
+                │ LibSQL  │ │  Mem0  │ │   JSONL    │
+                │ SQLite  │ │ Cloud  │ │   local    │
+                └─────────┘ └────────┘ └────────────┘
+                  always      optional     always
 ```
+
+**Backend detection** (from environment):
+- **Graph**: Always available. Uses `LIBSQL_URL` if set, otherwise local SQLite.
+- **Semantic**: Requires `MEM0_API_KEY` (hosted) or `POSTGRES_URL` (self-hosted). Gracefully disabled when neither is set — patterns stored in graph as fallback.
+- **Session**: Always available. Local JSONL file in `INLAND_EMPIRE_STATE_DIR`.
 
 ## When to Use
 
-- Store hunches, preferences, and soft context that doesn't belong in files
-- Recall project context after breaks
-- Detect patterns across sessions
-- Build institutional memory for recurring issues
+- **Remember** something that doesn't belong in code or config files
+- **Consult** before making decisions that might repeat past mistakes — results are facts to evaluate
+- **Surface** for the question *what am I not seeing?* — when starting unfamiliar work, when something feels familiar but you can't place it, or when linear reasoning has stalled
+- **Forget** stale context that's no longer relevant
+- Build institutional memory that **survives context window compression**
+
+## When NOT to Use
+
+- Structured project data → use files, databases, or config
+- Code-level documentation → use comments and docstrings
+- Ephemeral debugging notes → use the session scratchpad, not persistent memory
+- Anything that needs to be version-controlled → use git
+
+## Synergies
+
+Inland Empire integrates with other Cognitive Construct skills:
+
+- **← Rhetoric**: Significant deliberation outcomes are worth remembering
+- **← Encyclopedia**: Research findings can be stored as facts
+- **→ Rhetoric**: Surfaced memories inform deliberation context
+- **→ Volition**: Recalled patterns guide action selection
+
+## Configuration
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `LIBSQL_URL` | Graph database URL | `file:./memory-tool.db` (local) |
+| `LIBSQL_AUTH_TOKEN` | Remote Turso auth | (none) |
+| `MEM0_API_KEY` | Mem0 Cloud API key | (none — semantic backend disabled) |
+| `POSTGRES_URL` | Self-hosted Mem0 | (none) |
+| `INCEPTION_API_KEY` | Mercury diffusion LLM key (voice layer) | (none — voice disabled) |
+| `INLAND_EMPIRE_STATE_DIR` | Storage directory override | current directory |
+
+## Error Handling
+
+All commands return JSON with `"status": "ok"` or `"status": "error"`:
+
+```json
+{
+  "status": "error",
+  "command": "remember",
+  "error": {
+    "message": "Semantic backend unavailable: MEM0_API_KEY not configured",
+    "code": "BACKEND_UNAVAILABLE"
+  }
+}
+```
+
+Backend failures are isolated — if one backend fails, others still return results. The `partial` flag in responses indicates incomplete results.

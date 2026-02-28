@@ -1,30 +1,36 @@
 #!/usr/bin/env python3
 """
-Inland Empire - Unified memory substrate for Claude skills.
+Inland Empire - Subconscious memory layer for the Cognitive Construct.
 
-Store facts, patterns, and context. Query with remember, consult, and stats commands.
+Absorbs observations, surfaces relevant memories, and builds associative
+context across sessions.
 
-Backend mapping:
-    fact_memory    -> memory_libsql (graph entities/relations)
-    pattern_memory -> mem0/openmemory (hosted API or self-hosted)
-    context_memory -> memory_graph (JSONL session memory)
+Commands:
+    remember  - Commit something to memory (auto-classifies type)
+    consult   - Actively search stored memories
+    surface   - Broad associative retrieval ("gut feeling")
+    forget    - Selectively remove memories
+    stats     - Backend health and memory statistics
 
-Usage:
-    python inland-empire.py remember "User prefers verbose errors"
-    python inland-empire.py remember "Auth flow has race conditions" --type pattern
-    python inland-empire.py consult "user preferences" --depth deep
-    python inland-empire.py stats
+Backend mapping (internal, not exposed to user):
+    graph    -> memory_libsql (LibSQL/SQLite entities + relations)
+    semantic -> openmemory/mem0 (hosted or self-hosted semantic search)
+    session  -> JSONL file (append-only session notes)
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import os
+import re
 import sys
-from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+import urllib.error
+import urllib.request
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -32,11 +38,35 @@ from typing import Any
 
 # === Constants ===
 
-VERSION = "1.0.0"
-DEFAULT_STATE_DIR = Path.cwd()
+VERSION = "2.1.0"
 STATE_DIR_ENV = "INLAND_EMPIRE_STATE_DIR"
-EVENT_HOME_ENV = "INLAND_EMPIRE_EVENT_HOME"
-CONTEXT_MEMORY_FILE = "session_memory.jsonl"
+SESSION_FILE = "session_memory.jsonl"
+
+# Voice layer (Layer 2) — Mercury diffusion LLM
+VOICE_BASE_URL = "https://api.inceptionlabs.ai/v1"
+VOICE_MODEL = "mercury-small"
+VOICE_MAX_TOKENS = 150
+VOICE_TEMPERATURE = 1.0
+VOICE_SYSTEM_PROMPT = (
+    "You are Inland Empire, the gut feeling. You speak in fragments, "
+    "associations, and half-formed intuitions. You do not explain or "
+    "summarize. You connect things that seem unrelated. You feel the "
+    "shape of problems before you can name them. Speak as a voice from "
+    "the subconscious \u2014 oblique, impressionistic, sometimes wrong, "
+    "always pointing at something."
+)
+
+# Content classification signals
+_CONTEXT_SIGNALS = re.compile(
+    r"\b(currently|right now|this session|debugging|investigating|working on|"
+    r"todo|in progress|next step|blocked on|waiting for)\b",
+    re.IGNORECASE,
+)
+_PATTERN_SIGNALS = re.compile(
+    r"\b(always|usually|tends to|pattern|recurring|every time|often|"
+    r"prefers?|habit|keeps? happening|flaky|intermittent|race condition)\b",
+    re.IGNORECASE,
+)
 
 
 class MemoryType(str, Enum):
@@ -95,6 +125,46 @@ class MemoryError:
     backend: str | None = None
 
 
+# === Content Classification ===
+
+
+def classify_memory(text: str) -> MemoryType:
+    """Infer memory type from content via keyword heuristics."""
+    if _CONTEXT_SIGNALS.search(text):
+        return MemoryType.CONTEXT
+    if _PATTERN_SIGNALS.search(text):
+        return MemoryType.PATTERN
+    return MemoryType.FACT
+
+
+def content_hash(text: str) -> str:
+    """Deterministic content-addressable hash for entity naming."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+
+
+# === Duration Parsing ===
+
+_DURATION_RE = re.compile(r"^(\d+)([dhms])$")
+
+
+def parse_duration(s: str) -> timedelta | None:
+    """Parse a duration string like '7d', '24h', '30m', '60s'."""
+    m = _DURATION_RE.match(s.strip())
+    if not m:
+        return None
+    value, unit = int(m.group(1)), m.group(2)
+    match unit:
+        case "d":
+            return timedelta(days=value)
+        case "h":
+            return timedelta(hours=value)
+        case "m":
+            return timedelta(minutes=value)
+        case "s":
+            return timedelta(seconds=value)
+    return None
+
+
 # === Backend Detection ===
 
 
@@ -102,90 +172,70 @@ class MemoryError:
 class BackendConfig:
     """Configuration for memory backends."""
 
-    # fact_memory (libsql)
     libsql_url: str | None = None
     libsql_auth_token: str | None = None
-    libsql_available: bool = True  # Always available (local fallback)
-
-    # pattern_memory (mem0)
     mem0_api_key: str | None = None
     postgres_url: str | None = None
-    mem0_mode: str | None = None  # "hosted", "self-hosted", or None (disabled)
-
-    # context_memory (jsonl)
-    context_file: Path | None = None
-    context_available: bool = True  # Always available
-
-    # General
+    mem0_mode: str | None = None  # "hosted", "self-hosted", or None
+    session_file: Path | None = None
     state_dir: Path = field(default_factory=Path.cwd)
+    inception_api_key: str | None = None
 
 
 def detect_backends() -> BackendConfig:
     """Detect available backends from environment."""
     state_dir = Path(os.environ.get(STATE_DIR_ENV, ".")).resolve()
 
-    # LibSQL config
-    libsql_url = os.environ.get("LIBSQL_URL")
-    libsql_auth_token = os.environ.get("LIBSQL_AUTH_TOKEN")
-
-    # Mem0 config
     mem0_api_key = os.environ.get("MEM0_API_KEY")
     postgres_url = os.environ.get("POSTGRES_URL")
-
-    # Determine mem0 mode
     mem0_mode: str | None = None
     if mem0_api_key:
         mem0_mode = "hosted"
     elif postgres_url:
         mem0_mode = "self-hosted"
 
-    # Context file
-    context_file = state_dir / CONTEXT_MEMORY_FILE
-
     return BackendConfig(
-        libsql_url=libsql_url,
-        libsql_auth_token=libsql_auth_token,
-        libsql_available=True,
+        libsql_url=os.environ.get("LIBSQL_URL"),
+        libsql_auth_token=os.environ.get("LIBSQL_AUTH_TOKEN"),
         mem0_api_key=mem0_api_key,
         postgres_url=postgres_url,
         mem0_mode=mem0_mode,
-        context_file=context_file,
-        context_available=True,
+        session_file=state_dir / SESSION_FILE,
         state_dir=state_dir,
+        inception_api_key=os.environ.get("INCEPTION_API_KEY"),
     )
 
 
-# === Memory Entry Types ===
+# === Memory Entry ===
 
 
 @dataclass(frozen=True, slots=True)
 class MemoryEntry:
-    """A memory entry with normalized metadata."""
+    """A normalized memory entry returned from any backend."""
 
-    origin: str  # fact, pattern, or context
     summary: str
+    type: str  # fact, pattern, context
     score: float | None = None
     observed_at: str | None = None
-    backend: str | None = None  # fact_memory, pattern_memory, context_memory
-    partial: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass(frozen=True, slots=True)
-class ConsultMetadata:
-    """Metadata for a consult operation."""
-
-    requested_backends: list[str]
-    completed_backends: list[str]
-    timed_out_backends: list[str]
-    partial: bool
+# === Backend: Graph (LibSQL) ===
 
 
-# === Backend Clients ===
+def _import_libsql_module(name: str) -> Any:
+    """Import from memory_libsql, falling back to local path."""
+    try:
+        mod = __import__("memory_libsql", fromlist=[name])
+        return getattr(mod, name)
+    except ImportError:
+        sys.path.insert(0, str(Path(__file__).parent))
+        mod = __import__("memory_libsql", fromlist=[name])
+        return getattr(mod, name)
 
 
-class FactMemoryBackend:
-    """Backend for fact_memory using memory_libsql."""
+class GraphBackend:
+    """Structured graph storage for facts and pattern fallback."""
 
     def __init__(self, config: BackendConfig) -> None:
         self.config = config
@@ -194,98 +244,101 @@ class FactMemoryBackend:
     async def initialize(self) -> Result:
         """Initialize the LibSQL client."""
         try:
-            # Import here to avoid hard dependency
-            try:
-                from memory_libsql import MemoryClient
-            except ImportError:
-                import sys
-                sys.path.insert(0, str(Path(__file__).parent))
-                from memory_libsql import MemoryClient
-
+            MemoryClient = _import_libsql_module("MemoryClient")
             self._client = MemoryClient(
                 url=self.config.libsql_url,
                 auth_token=self.config.libsql_auth_token,
             )
             result = await self._client.initialize()
             if result.is_err():
-                self._client = None  # Reset on failure
-                return Err(MemoryError(result.error.message, "INIT_FAILED", "fact_memory"))
+                self._client = None
+                return Err(MemoryError(result.error.message, "INIT_FAILED", "graph"))
             return Ok(None)
         except ImportError as e:
             self._client = None
-            return Err(MemoryError(f"memory_libsql dependency missing: {e}", "IMPORT_ERROR", "fact_memory"))
+            return Err(MemoryError(f"memory_libsql missing: {e}", "IMPORT_ERROR", "graph"))
         except Exception as e:
             self._client = None
-            return Err(MemoryError(str(e), "INIT_FAILED", "fact_memory"))
+            return Err(MemoryError(str(e), "INIT_FAILED", "graph"))
 
-    async def store(self, text: str) -> Result:
-        """Store a fact as an entity observation."""
+    async def store(self, text: str, entity_type: str = "fact") -> Result:
+        """Store text as an entity observation with content-addressable name."""
         if not self._client:
-            return Err(MemoryError("Not initialized", "NOT_INITIALIZED", "fact_memory"))
+            return Err(MemoryError("Not initialized", "NOT_INITIALIZED", "graph"))
 
         try:
-            try:
-                from memory_libsql import Entity
-            except ImportError:
-                import sys
-                sys.path.insert(0, str(Path(__file__).parent))
-                from memory_libsql import Entity
-
-            # Create a generic "fact" entity with the observation
-            entity = Entity(
-                name=f"fact_{hash(text) % 10000:04d}",
-                entity_type="fact",
-                observations=[text],
-            )
+            Entity = _import_libsql_module("Entity")
+            name = f"{entity_type}_{content_hash(text)}"
+            entity = Entity(name=name, entity_type=entity_type, observations=[text])
             result = await self._client.create_entities([entity])
             if result.is_err():
-                return Err(MemoryError(result.error.message, result.error.code, "fact_memory"))
-
-            return Ok({
-                "stored": True,
-                "backend": "fact_memory",
-                "entity_name": entity.name,
-            })
+                return Err(MemoryError(result.error.message, result.error.code, "graph"))
+            return Ok({"stored": True, "entity_name": name})
         except Exception as e:
-            return Err(MemoryError(str(e), "STORE_FAILED", "fact_memory"))
+            return Err(MemoryError(str(e), "STORE_FAILED", "graph"))
 
-    async def search(self, query: str, limit: int = 10) -> Result:
-        """Search for facts."""
+    async def search(
+        self, query: str, limit: int = 10, entity_type: str | None = None
+    ) -> Result:
+        """Search graph entities, optionally filtered by entity_type."""
         if not self._client:
-            return Err(MemoryError("Not initialized", "NOT_INITIALIZED", "fact_memory"))
+            return Err(MemoryError("Not initialized", "NOT_INITIALIZED", "graph"))
 
         try:
             result = await self._client.search_nodes(query, limit=limit)
             if result.is_err():
-                return Err(MemoryError(result.error.message, result.error.code, "fact_memory"))
+                return Err(MemoryError(result.error.message, result.error.code, "graph"))
 
             entries = []
-            graph = result.value
-            for entity in graph.entities:
+            for entity in result.value.entities:
+                if entity_type and entity.entity_type != entity_type:
+                    continue
                 for obs in entity.observations:
                     entries.append(
                         MemoryEntry(
-                            origin="fact",
                             summary=obs,
-                            backend="fact_memory",
-                            metadata={
-                                "entity_name": entity.name,
-                                "entity_type": entity.entity_type,
-                            },
+                            type=entity.entity_type,
+                            metadata={"entity_name": entity.name},
                         )
                     )
             return Ok(entries)
         except Exception as e:
-            return Err(MemoryError(str(e), "SEARCH_FAILED", "fact_memory"))
+            return Err(MemoryError(str(e), "SEARCH_FAILED", "graph"))
+
+    async def delete_matching(
+        self, query: str, entity_type: str | None = None
+    ) -> Result:
+        """Delete entities matching query. Returns count deleted."""
+        if not self._client:
+            return Err(MemoryError("Not initialized", "NOT_INITIALIZED", "graph"))
+
+        try:
+            result = await self._client.search_nodes(query, limit=50)
+            if result.is_err():
+                return Err(MemoryError(result.error.message, result.error.code, "graph"))
+
+            deleted = 0
+            for entity in result.value.entities:
+                if entity_type and entity.entity_type != entity_type:
+                    continue
+                del_result = await self._client.delete_entity(entity.name)
+                if del_result.is_ok():
+                    deleted += 1
+            return Ok(deleted)
+        except Exception as e:
+            return Err(MemoryError(str(e), "DELETE_FAILED", "graph"))
 
     async def close(self) -> None:
-        """Close the client."""
+        """Close the database connection."""
         if self._client:
             await self._client.close()
 
 
-class PatternMemoryBackend:
-    """Backend for pattern_memory using mem0/openmemory."""
+# === Backend: Semantic (Mem0) ===
+
+
+class SemanticBackend:
+    """Semantic memory via Mem0 API."""
 
     def __init__(self, config: BackendConfig) -> None:
         self.config = config
@@ -294,101 +347,119 @@ class PatternMemoryBackend:
     async def initialize(self) -> Result:
         """Initialize the Mem0 client."""
         if not self.config.mem0_mode:
-            return Err(MemoryError("mem0 not configured", "NOT_CONFIGURED", "pattern_memory"))
+            return Err(MemoryError("Not configured", "NOT_CONFIGURED", "semantic"))
 
         try:
-            # Try installed package first, then fall back to local
             try:
                 from openmemory import Mem0Client
             except ImportError:
-                import sys
                 sys.path.insert(0, str(Path(__file__).parent / "mem0"))
                 from openmemory import Mem0Client
 
             self._client = Mem0Client(api_key=self.config.mem0_api_key)
             return Ok(None)
         except ImportError:
-            return Err(MemoryError("openmemory not installed", "IMPORT_ERROR", "pattern_memory"))
+            return Err(MemoryError("openmemory not installed", "IMPORT_ERROR", "semantic"))
         except Exception as e:
-            return Err(MemoryError(str(e), "INIT_FAILED", "pattern_memory"))
+            return Err(MemoryError(str(e), "INIT_FAILED", "semantic"))
 
     async def store(self, text: str) -> Result:
-        """Store a pattern in mem0."""
+        """Store a pattern in Mem0."""
         if not self._client:
-            return Err(MemoryError("Not initialized", "NOT_INITIALIZED", "pattern_memory"))
+            return Err(MemoryError("Not initialized", "NOT_INITIALIZED", "semantic"))
 
         try:
             result = await self._client.add(text, user_id="agent_subconscious")
             if result.is_err():
-                return Err(MemoryError(result.error.message, result.error.code, "pattern_memory"))
-
-            return Ok({
-                "stored": True,
-                "backend": "pattern_memory",
-                "mode": self.config.mem0_mode,
-            })
+                return Err(MemoryError(result.error.message, result.error.code, "semantic"))
+            return Ok({"stored": True, "mode": self.config.mem0_mode})
         except Exception as e:
-            return Err(MemoryError(str(e), "STORE_FAILED", "pattern_memory"))
+            return Err(MemoryError(str(e), "STORE_FAILED", "semantic"))
 
     async def search(self, query: str, limit: int = 10) -> Result:
-        """Search for patterns."""
+        """Semantic search for patterns."""
         if not self._client:
-            return Err(MemoryError("Not initialized", "NOT_INITIALIZED", "pattern_memory"))
+            return Err(MemoryError("Not initialized", "NOT_INITIALIZED", "semantic"))
 
         try:
-            result = await self._client.search(query, filters={"user_id": "agent_subconscious"}, top_k=limit)
+            result = await self._client.search(
+                query,
+                filters={"user_id": "agent_subconscious"},
+                top_k=limit,
+            )
             if result.is_err():
-                return Err(MemoryError(result.error.message, result.error.code, "pattern_memory"))
+                return Err(MemoryError(result.error.message, result.error.code, "semantic"))
 
             entries = []
-            for memory in result.value.results:
+            for mem in result.value.results:
                 entries.append(
                     MemoryEntry(
-                        origin="pattern",
-                        summary=memory.memory,
-                        score=memory.score,
-                        observed_at=memory.created_at,
-                        backend="pattern_memory",
-                        metadata={
-                            "id": memory.id,
-                            "user_id": "agent_subconscious",
-                            "created_at": memory.created_at,
-                            "updated_at": memory.updated_at,
-                            "mode": self.config.mem0_mode,
-                        },
+                        summary=mem.memory,
+                        type="pattern",
+                        score=mem.score,
+                        observed_at=mem.created_at,
+                        metadata={"id": mem.id, "mode": self.config.mem0_mode},
                     )
                 )
             return Ok(entries)
         except Exception as e:
-            return Err(MemoryError(str(e), "SEARCH_FAILED", "pattern_memory"))
+            return Err(MemoryError(str(e), "SEARCH_FAILED", "semantic"))
 
-    async def close(self) -> None:
-        """Close the client (no-op for mem0)."""
-        pass
-
-
-class ContextMemoryBackend:
-    """Backend for context_memory using JSONL file."""
-
-    def __init__(self, config: BackendConfig) -> None:
-        self.config = config
-        self._file_path: Path | None = config.context_file
-
-    async def initialize(self) -> Result:
-        """Initialize the context memory (ensure directory exists)."""
-        if not self._file_path:
-            return Err(MemoryError("No context file configured", "NOT_CONFIGURED", "context_memory"))
+    async def delete_matching(self, query: str) -> Result:
+        """Search for matching memories and delete them. Returns count deleted."""
+        if not self._client:
+            return Err(MemoryError("Not initialized", "NOT_INITIALIZED", "semantic"))
 
         try:
-            self._file_path.parent.mkdir(parents=True, exist_ok=True)
+            search_result = await self._client.search(
+                query,
+                filters={"user_id": "agent_subconscious"},
+                top_k=20,
+            )
+            if search_result.is_err():
+                return Err(
+                    MemoryError(
+                        search_result.error.message, search_result.error.code, "semantic"
+                    )
+                )
+
+            deleted = 0
+            for mem in search_result.value.results:
+                del_result = await self._client.delete(mem.id)
+                if del_result.is_ok():
+                    deleted += 1
+            return Ok(deleted)
+        except Exception as e:
+            return Err(MemoryError(str(e), "DELETE_FAILED", "semantic"))
+
+    async def close(self) -> None:
+        """No-op for Mem0."""
+
+
+# === Backend: Session (JSONL) ===
+
+
+class SessionBackend:
+    """Append-only session context in JSONL."""
+
+    def __init__(self, config: BackendConfig) -> None:
+        self._path: Path | None = config.session_file
+
+    async def initialize(self) -> Result:
+        """Ensure session directory exists."""
+        if not self._path:
+            return Err(MemoryError("No session file configured", "NOT_CONFIGURED", "session"))
+
+        try:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
             return Ok(None)
         except Exception as e:
-            return Err(MemoryError(str(e), "INIT_FAILED", "context_memory"))
+            return Err(MemoryError(str(e), "INIT_FAILED", "session"))
 
     async def store(self, text: str) -> Result:
-        """Store context to JSONL file."""
-        if not self._file_path:
-            return Err(MemoryError("Not initialized", "NOT_INITIALIZED", "context_memory"))
+        """Append context to JSONL file."""
+        if not self._path:
+            return Err(MemoryError("Not initialized", "NOT_INITIALIZED", "session"))
 
         try:
             entry = {
@@ -396,163 +467,316 @@ class ContextMemoryBackend:
                 "content": text,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
-            with self._file_path.open("a", encoding="utf-8") as f:
+            with self._path.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(entry) + "\n")
-
-            return Ok({
-                "stored": True,
-                "backend": "context_memory",
-                "file": str(self._file_path),
-            })
+            return Ok({"stored": True})
         except Exception as e:
-            return Err(MemoryError(str(e), "STORE_FAILED", "context_memory"))
+            return Err(MemoryError(str(e), "STORE_FAILED", "session"))
 
     async def search(self, query: str, limit: int = 10) -> Result:
-        """Search context memory (simple substring matching)."""
-        if not self._file_path:
-            return Err(MemoryError("Not initialized", "NOT_INITIALIZED", "context_memory"))
+        """Search session memory (substring matching, most recent first)."""
+        if not self._path:
+            return Err(MemoryError("Not initialized", "NOT_INITIALIZED", "session"))
 
         try:
-            if not self._file_path.exists():
+            if not self._path.exists():
                 return Ok([])
 
-            entries = []
+            entries: list[MemoryEntry] = []
             query_lower = query.lower()
+            lines = self._path.read_text(encoding="utf-8").splitlines()
 
-            for line in self._file_path.read_text(encoding="utf-8").splitlines():
+            for line in reversed(lines):
                 if not line.strip():
                     continue
                 try:
                     data = json.loads(line)
-                    content = data.get("content", "")
-                    if query_lower in content.lower():
-                        entries.append(
-                            MemoryEntry(
-                                origin="context",
-                                summary=content,
-                                observed_at=data.get("timestamp"),
-                                backend="context_memory",
-                                metadata={
-                                    "type": data.get("type"),
-                                },
-                            )
-                        )
                 except json.JSONDecodeError:
                     continue
 
+                content = data.get("content", "")
+                if query_lower in content.lower():
+                    entries.append(
+                        MemoryEntry(
+                            summary=content,
+                            type="context",
+                            observed_at=data.get("timestamp"),
+                        )
+                    )
+                    if len(entries) >= limit:
+                        break
+
+            return Ok(entries)
+        except Exception as e:
+            return Err(MemoryError(str(e), "SEARCH_FAILED", "session"))
+
+    async def delete_matching(
+        self,
+        query: str | None = None,
+        before: datetime | None = None,
+    ) -> Result:
+        """Delete matching session entries. Rewrites JSONL file.
+
+        When both query and before are provided, uses AND semantics:
+        an entry must match the query AND be older than the threshold.
+        When only one is provided, that criterion alone applies.
+        """
+        if not self._path:
+            return Err(MemoryError("Not initialized", "NOT_INITIALIZED", "session"))
+
+        try:
+            if not self._path.exists():
+                return Ok(0)
+
+            lines = self._path.read_text(encoding="utf-8").splitlines()
+            keep: list[str] = []
+            deleted = 0
+            query_lower = query.lower() if query else None
+
+            for line in lines:
+                if not line.strip():
+                    continue
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    keep.append(line)
+                    continue
+
+                should_delete = True
+
+                # If query specified, content must match
+                if query_lower:
+                    content = data.get("content", "")
+                    if query_lower not in content.lower():
+                        should_delete = False
+
+                # If before specified, entry must be old enough
+                if should_delete and before:
+                    ts = data.get("timestamp")
+                    if ts:
+                        try:
+                            entry_time = datetime.fromisoformat(ts)
+                            if entry_time >= before:
+                                should_delete = False
+                        except ValueError:
+                            should_delete = False
+                    else:
+                        should_delete = False  # No timestamp, can't determine age
+
+                if should_delete:
+                    deleted += 1
+                else:
+                    keep.append(line)
+
+            self._path.write_text(
+                "\n".join(keep) + ("\n" if keep else ""),
+                encoding="utf-8",
+            )
+            return Ok(deleted)
+        except Exception as e:
+            return Err(MemoryError(str(e), "DELETE_FAILED", "session"))
+
+    async def all_entries(self, limit: int = 50) -> Result:
+        """Return all session entries (most recent first)."""
+        if not self._path:
+            return Err(MemoryError("Not initialized", "NOT_INITIALIZED", "session"))
+
+        try:
+            if not self._path.exists():
+                return Ok([])
+
+            entries: list[MemoryEntry] = []
+            lines = self._path.read_text(encoding="utf-8").splitlines()
+
+            for line in reversed(lines):
+                if not line.strip():
+                    continue
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                entries.append(
+                    MemoryEntry(
+                        summary=data.get("content", ""),
+                        type="context",
+                        observed_at=data.get("timestamp"),
+                    )
+                )
                 if len(entries) >= limit:
                     break
 
             return Ok(entries)
         except Exception as e:
-            return Err(MemoryError(str(e), "SEARCH_FAILED", "context_memory"))
+            return Err(MemoryError(str(e), "SEARCH_FAILED", "session"))
 
     async def count(self) -> int:
-        """Count context entries."""
-        if not self._file_path or not self._file_path.exists():
+        """Count session entries."""
+        if not self._path or not self._path.exists():
             return 0
-        return sum(1 for line in self._file_path.read_text(encoding="utf-8").splitlines() if line.strip())
+        return sum(
+            1
+            for line in self._path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
 
     async def close(self) -> None:
-        """Close the backend (no-op for JSONL)."""
-        pass
+        """No-op for JSONL."""
 
 
-# === Unified Memory Manager ===
+# === Voice Layer (Layer 2) ===
+
+
+class VoiceLayer:
+    """Associative voice synthesis via Mercury diffusion LLM.
+
+    Generates an oblique, impressionistic reading of surfaced associations.
+    Degrades silently to None when INCEPTION_API_KEY is not set or the API
+    is unreachable.
+    """
+
+    def __init__(self, api_key: str | None) -> None:
+        self._api_key = api_key
+        self._available = bool(api_key)
+
+    async def generate(
+        self, associations: list[dict[str, Any]], context: str
+    ) -> str | None:
+        """Generate a voice reading. Returns None if unavailable or on error."""
+        if not self._available or not associations:
+            return None
+
+        summaries = [a["summary"] for a in associations]
+        numbered = " ".join(f"({i + 1}) {s}" for i, s in enumerate(summaries))
+        user_content = (
+            f"These memories surfaced: {numbered}. "
+            f"The current context is: {context}. "
+            f"What does your gut say?"
+        )
+
+        payload = json.dumps({
+            "model": VOICE_MODEL,
+            "messages": [
+                {"role": "system", "content": VOICE_SYSTEM_PROMPT},
+                {"role": "user", "content": user_content},
+            ],
+            "max_tokens": VOICE_MAX_TOKENS,
+            "temperature": VOICE_TEMPERATURE,
+        }).encode()
+
+        def _call() -> str | None:
+            req = urllib.request.Request(
+                f"{VOICE_BASE_URL}/chat/completions",
+                data=payload,
+                headers={
+                    "Authorization": f"Bearer {self._api_key}",
+                    "Content-Type": "application/json",
+                },
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    data = json.loads(resp.read())
+                    content = data["choices"][0]["message"]["content"]
+                    return content.strip() if content else None
+            except (
+                urllib.error.URLError,
+                KeyError,
+                IndexError,
+                json.JSONDecodeError,
+                OSError,
+            ):
+                return None
+
+        try:
+            return await asyncio.to_thread(_call)
+        except Exception:
+            return None
+
+
+# === Unified Orchestrator ===
 
 
 class InlandEmpire:
-    """Unified memory substrate manager."""
+    """Subconscious memory layer."""
 
     def __init__(self) -> None:
         self.config = detect_backends()
-        self.fact = FactMemoryBackend(self.config)
-        self.pattern = PatternMemoryBackend(self.config)
-        self.context = ContextMemoryBackend(self.config)
+        self.graph = GraphBackend(self.config)
+        self.semantic = SemanticBackend(self.config)
+        self.session = SessionBackend(self.config)
+        self.voice = VoiceLayer(self.config.inception_api_key)
         self._initialized = False
         self._init_results: dict[str, Result] = {}
 
-    async def initialize(self) -> dict[str, Result]:
+    async def initialize(self) -> None:
         """Initialize all backends."""
         results: dict[str, Result] = {}
-
-        # Always initialize fact and context (they have local fallbacks)
-        results["fact_memory"] = await self.fact.initialize()
-        results["context_memory"] = await self.context.initialize()
-
-        # Only initialize pattern if configured
+        results["graph"] = await self.graph.initialize()
+        results["session"] = await self.session.initialize()
         if self.config.mem0_mode:
-            results["pattern_memory"] = await self.pattern.initialize()
-
+            results["semantic"] = await self.semantic.initialize()
         self._init_results = results
         self._initialized = True
-        return results
 
-    def _get_init_error(self, backend_name: str) -> str | None:
-        """Get the initialization error message for a backend, if any."""
-        result = self._init_results.get(backend_name)
-        if result and result.is_err():
-            return result.error.message
-        return None
+    def _backend_ok(self, name: str) -> bool:
+        """Check if a backend initialized successfully."""
+        result = self._init_results.get(name)
+        return result is not None and result.is_ok()
 
-    async def remember(self, text: str, memory_type: MemoryType | None = None) -> dict[str, Any]:
-        """Store a memory.
+    def _semantic_available(self) -> bool:
+        """Check if semantic backend is configured and initialized."""
+        return self.config.mem0_mode is not None and self._backend_ok("semantic")
 
-        If no type specified, stores to fact_memory by default.
-        """
+    async def _ensure_init(self) -> None:
         if not self._initialized:
             await self.initialize()
 
-        # Default to fact if not specified
-        target_type = memory_type or MemoryType.FACT
+    # --- remember ---
 
-        backend_map = {
-            MemoryType.FACT: ("fact_memory", self.fact),
-            MemoryType.PATTERN: ("pattern_memory", self.pattern),
-            MemoryType.CONTEXT: ("context_memory", self.context),
-        }
-
-        backend_info = backend_map.get(target_type)
-        if not backend_info:
+    async def remember(
+        self, text: str, memory_type: MemoryType | None = None
+    ) -> dict[str, Any]:
+        """Store a memory. Auto-classifies type unless overridden."""
+        if not text or not text.strip():
             return {
                 "status": "error",
                 "command": "remember",
-                "error": {"message": f"Unknown memory type: {target_type}", "code": "INVALID_TYPE"},
+                "error": {"message": "Memory text cannot be empty", "code": "EMPTY_INPUT"},
             }
 
-        backend_name, backend = backend_info
+        await self._ensure_init()
 
-        # Check if backend failed to initialize
-        init_error = self._get_init_error(backend_name)
-        if init_error:
-            return {
-                "status": "error",
-                "command": "remember",
-                "error": {
-                    "message": f"Backend not available: {init_error}",
-                    "code": "BACKEND_UNAVAILABLE",
-                    "backend": backend_name,
-                },
-            }
+        inferred = memory_type or classify_memory(text)
 
-        result = await backend.store(text)
+        if inferred == MemoryType.CONTEXT:
+            result = await self.session.store(text)
+        elif inferred == MemoryType.PATTERN:
+            if self._semantic_available():
+                result = await self.semantic.store(text)
+            else:
+                # Fallback: store pattern in graph with entity_type="pattern"
+                result = await self.graph.store(text, entity_type="pattern")
+        else:
+            result = await self.graph.store(text, entity_type="fact")
 
         if result.is_err():
             return {
                 "status": "error",
                 "command": "remember",
-                "error": {
-                    "message": result.error.message,
-                    "code": result.error.code,
-                    "backend": result.error.backend,
-                },
+                "error": {"message": result.error.message, "code": result.error.code},
             }
 
-        return {
+        response: dict[str, Any] = {
             "status": "ok",
             "command": "remember",
-            "result": result.value,
+            "result": {"stored": True, "inferred_type": inferred.value},
         }
+        if memory_type:
+            response["result"]["type_override"] = memory_type.value
+        return response
+
+    # --- consult ---
 
     async def consult(
         self,
@@ -560,74 +784,69 @@ class InlandEmpire:
         depth: SearchDepth = SearchDepth.SHALLOW,
         memory_type: MemoryType | None = None,
     ) -> dict[str, Any]:
-        """Query stored memories."""
-        if not self._initialized:
-            await self.initialize()
+        """Actively search stored memories."""
+        if not query or not query.strip():
+            return {
+                "status": "error",
+                "command": "consult",
+                "error": {"message": "Query cannot be empty", "code": "EMPTY_INPUT"},
+            }
+
+        await self._ensure_init()
 
         limit = 5 if depth == SearchDepth.SHALLOW else 20
-        requested_backends: list[str] = []
-        completed_backends: list[str] = []
-        timed_out_backends: list[str] = []
-        all_results: list[MemoryEntry] = []
+        all_entries: list[MemoryEntry] = []
+        partial = False
 
-        # Determine which backends to query
-        backends_to_query: list[tuple[str, Any]] = []
-
-        if memory_type is None:
-            # Query all available backends
-            backends_to_query.append(("fact_memory", self.fact))
-            if self.config.mem0_mode:
-                backends_to_query.append(("pattern_memory", self.pattern))
-            backends_to_query.append(("context_memory", self.context))
-        elif memory_type == MemoryType.FACT:
-            backends_to_query.append(("fact_memory", self.fact))
-        elif memory_type == MemoryType.PATTERN:
-            if self.config.mem0_mode:
-                backends_to_query.append(("pattern_memory", self.pattern))
-            else:
-                return {
-                    "status": "error",
-                    "command": "consult",
-                    "error": {"message": "pattern_memory not configured", "code": "NOT_CONFIGURED"},
-                }
-        elif memory_type == MemoryType.CONTEXT:
-            backends_to_query.append(("context_memory", self.context))
-
-        requested_backends = [name for name, _ in backends_to_query]
-        unavailable_backends: list[str] = []
-
-        # Query each backend
-        for backend_name, backend in backends_to_query:
-            # Skip backends that failed to initialize
-            init_error = self._get_init_error(backend_name)
-            if init_error:
-                unavailable_backends.append(backend_name)
-                continue
-
+        async def _query_backend(coro: Any) -> list[MemoryEntry]:
+            nonlocal partial
             try:
-                result = await asyncio.wait_for(backend.search(query, limit=limit), timeout=30.0)
+                result = await asyncio.wait_for(coro, timeout=30.0)
                 if result.is_ok():
-                    all_results.extend(result.value)
-                    completed_backends.append(backend_name)
-                else:
-                    timed_out_backends.append(backend_name)
-            except asyncio.TimeoutError:
-                timed_out_backends.append(backend_name)
-            except Exception:
-                timed_out_backends.append(backend_name)
+                    return result.value
+                partial = True
+            except (asyncio.TimeoutError, Exception):
+                partial = True
+            return []
 
-        # Convert MemoryEntry dataclasses to dicts
-        results_dict = []
-        for entry in all_results:
-            results_dict.append({
-                "origin": entry.origin,
-                "summary": entry.summary,
-                "score": entry.score,
-                "observed_at": entry.observed_at,
-                "backend": entry.backend,
-                "partial": entry.partial,
-                "metadata": entry.metadata,
-            })
+        # Query facts from graph
+        if memory_type is None or memory_type == MemoryType.FACT:
+            if self._backend_ok("graph"):
+                all_entries.extend(
+                    await _query_backend(
+                        self.graph.search(query, limit=limit, entity_type="fact")
+                    )
+                )
+
+        # Query patterns from semantic (or graph fallback)
+        if memory_type is None or memory_type == MemoryType.PATTERN:
+            if self._semantic_available():
+                all_entries.extend(
+                    await _query_backend(self.semantic.search(query, limit=limit))
+                )
+            elif self._backend_ok("graph"):
+                all_entries.extend(
+                    await _query_backend(
+                        self.graph.search(query, limit=limit, entity_type="pattern")
+                    )
+                )
+
+        # Query context from session
+        if memory_type is None or memory_type == MemoryType.CONTEXT:
+            if self._backend_ok("session"):
+                all_entries.extend(
+                    await _query_backend(self.session.search(query, limit=limit))
+                )
+
+        results = [
+            {
+                "summary": e.summary,
+                "type": e.type,
+                "score": e.score,
+                "observed_at": e.observed_at,
+            }
+            for e in all_entries
+        ]
 
         return {
             "status": "ok",
@@ -635,94 +854,330 @@ class InlandEmpire:
             "result": {
                 "query": query,
                 "depth": depth.value,
-                "results": results_dict,
-                "metadata": {
-                    "requested_backends": requested_backends,
-                    "completed_backends": completed_backends,
-                    "unavailable_backends": unavailable_backends,
-                    "timed_out_backends": timed_out_backends,
-                    "partial": len(timed_out_backends) > 0 or len(unavailable_backends) > 0,
-                },
+                "results": results,
+                "partial": partial,
             },
         }
 
-    async def stats(self) -> dict[str, Any]:
-        """Get backend health and statistics."""
-        if not self._initialized:
-            await self.initialize()
+    # --- surface ---
 
-        backends = {}
+    async def surface(
+        self, context: str, *, voice_enabled: bool = True
+    ) -> dict[str, Any]:
+        """Broad associative retrieval across all backends.
 
-        # Fact memory stats
-        fact_error = self._get_init_error("fact_memory")
-        if fact_error:
-            backends["fact_memory"] = {
-                "status": "unavailable",
-                "backend": "memory_libsql",
-                "error": fact_error,
-            }
-        else:
-            backends["fact_memory"] = {
-                "status": "available",
-                "backend": "memory_libsql",
-                "url": self.config.libsql_url or "file:./memory-tool.db (local)",
-                "remote": bool(self.config.libsql_auth_token),
+        Unlike consult (which searches for specific terms), surface casts a
+        wide net looking for anything tangentially relevant to the current
+        context. This is the "gut feeling" command.
+
+        When voice_enabled is True and INCEPTION_API_KEY is set, generates
+        an associative voice reading via Mercury diffusion LLM.
+        """
+        if not context or not context.strip():
+            return {
+                "status": "error",
+                "command": "surface",
+                "error": {"message": "Context cannot be empty", "code": "EMPTY_INPUT"},
             }
 
-        # Pattern memory stats
-        if self.config.mem0_mode:
-            pattern_error = self._get_init_error("pattern_memory")
-            if pattern_error:
-                backends["pattern_memory"] = {
-                    "status": "unavailable",
-                    "backend": "mem0",
-                    "mode": self.config.mem0_mode,
-                    "error": pattern_error,
-                }
+        await self._ensure_init()
+
+        all_entries: list[MemoryEntry] = []
+        partial = False
+
+        async def _query(coro: Any) -> list[MemoryEntry]:
+            nonlocal partial
+            try:
+                result = await asyncio.wait_for(coro, timeout=30.0)
+                if result.is_ok():
+                    return result.value
+                partial = True
+            except (asyncio.TimeoutError, Exception):
+                partial = True
+            return []
+
+        # Extract individual keywords for broad matching.
+        # Surface searches each keyword independently, unlike consult which
+        # uses the exact query string. This is the "wide net" behavior.
+        keywords = [w for w in context.split() if len(w) >= 3]
+        if not keywords:
+            keywords = [context]
+
+        seen: set[str] = set()
+
+        async def _collect(coro: Any) -> None:
+            entries = await _query(coro)
+            for entry in entries:
+                if entry.summary not in seen:
+                    seen.add(entry.summary)
+                    all_entries.append(entry)
+
+        # Query all backends with each keyword, generous limits, no type filtering
+        for keyword in keywords:
+            if self._backend_ok("graph"):
+                await _collect(self.graph.search(keyword, limit=20))
+
+            if self._semantic_available():
+                await _collect(self.semantic.search(keyword, limit=20))
+
+            if self._backend_ok("session"):
+                await _collect(self.session.search(keyword, limit=10))
+
+        # Tag relevance based on score (semantic) or position (others)
+        associations = []
+        for i, entry in enumerate(all_entries):
+            if entry.score is not None:
+                if entry.score > 0.7:
+                    relevance = "high"
+                elif entry.score > 0.4:
+                    relevance = "medium"
+                else:
+                    relevance = "low"
             else:
-                backends["pattern_memory"] = {
-                    "status": "available",
-                    "backend": "mem0",
-                    "mode": self.config.mem0_mode,
+                # Position-based heuristic for backends without scoring
+                if i < 3:
+                    relevance = "high"
+                elif i < 10:
+                    relevance = "medium"
+                else:
+                    relevance = "low"
+
+            associations.append(
+                {
+                    "summary": entry.summary,
+                    "type": entry.type,
+                    "relevance": relevance,
+                    "observed_at": entry.observed_at,
                 }
+            )
+
+        # Voice layer: generate associative reading if enabled and associations exist
+        voice: str | None = None
+        if voice_enabled and associations:
+            voice = await self.voice.generate(associations, context)
+
+        return {
+            "status": "ok",
+            "command": "surface",
+            "result": {
+                "context": context,
+                "associations": associations,
+                "voice": voice,
+                "partial": partial,
+            },
+        }
+
+    # --- forget ---
+
+    async def forget(
+        self,
+        query: str | None = None,
+        memory_type: MemoryType | None = None,
+        before: str | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """Selectively remove memories.
+
+        When both query and --before are provided, uses AND semantics.
+        """
+        await self._ensure_init()
+
+        # Parse duration if provided
+        before_dt: datetime | None = None
+        if before:
+            duration = parse_duration(before)
+            if not duration:
+                return {
+                    "status": "error",
+                    "command": "forget",
+                    "error": {
+                        "message": f"Invalid duration: {before}. Use format like 7d, 24h, 30m.",
+                        "code": "INVALID_DURATION",
+                    },
+                }
+            before_dt = datetime.now(timezone.utc) - duration
+
+        if not query and not before:
+            return {
+                "status": "error",
+                "command": "forget",
+                "error": {
+                    "message": "Provide a query, --before duration, or both.",
+                    "code": "MISSING_CRITERIA",
+                },
+            }
+
+        if dry_run:
+            return await self._forget_dry_run(query, memory_type, before_dt)
+
+        total_deleted = 0
+
+        # Delete from graph (facts and fallback patterns)
+        if memory_type is None or memory_type in (MemoryType.FACT, MemoryType.PATTERN):
+            if self._backend_ok("graph") and query:
+                et = memory_type.value if memory_type else None
+                result = await self.graph.delete_matching(query, entity_type=et)
+                if result.is_ok():
+                    total_deleted += result.value
+
+        # Delete from semantic (patterns)
+        if memory_type is None or memory_type == MemoryType.PATTERN:
+            if self._semantic_available() and query:
+                result = await self.semantic.delete_matching(query)
+                if result.is_ok():
+                    total_deleted += result.value
+
+        # Delete from session (context)
+        if memory_type is None or memory_type == MemoryType.CONTEXT:
+            if self._backend_ok("session"):
+                result = await self.session.delete_matching(
+                    query=query, before=before_dt
+                )
+                if result.is_ok():
+                    total_deleted += result.value
+
+        return {
+            "status": "ok",
+            "command": "forget",
+            "result": {"deleted": total_deleted},
+        }
+
+    async def _forget_dry_run(
+        self,
+        query: str | None,
+        memory_type: MemoryType | None,
+        before_dt: datetime | None,
+    ) -> dict[str, Any]:
+        """Preview what would be deleted without actually deleting."""
+        would_delete: list[dict[str, Any]] = []
+
+        # Preview graph deletions
+        if query and (
+            memory_type is None
+            or memory_type in (MemoryType.FACT, MemoryType.PATTERN)
+        ):
+            if self._backend_ok("graph"):
+                et = memory_type.value if memory_type else None
+                result = await self.graph.search(query, limit=50, entity_type=et)
+                if result.is_ok():
+                    for e in result.value:
+                        would_delete.append({"summary": e.summary, "type": e.type})
+
+        # Preview semantic deletions
+        if query and (memory_type is None or memory_type == MemoryType.PATTERN):
+            if self._semantic_available():
+                result = await self.semantic.search(query, limit=20)
+                if result.is_ok():
+                    for e in result.value:
+                        would_delete.append({"summary": e.summary, "type": e.type})
+
+        # Preview session deletions
+        if memory_type is None or memory_type == MemoryType.CONTEXT:
+            if self._backend_ok("session"):
+                # Get candidates: either matching query or all entries
+                if query:
+                    result = await self.session.search(query, limit=50)
+                else:
+                    result = await self.session.all_entries(limit=50)
+
+                if result.is_ok():
+                    for e in result.value:
+                        # Apply before filter for preview
+                        if before_dt and e.observed_at:
+                            try:
+                                if datetime.fromisoformat(e.observed_at) >= before_dt:
+                                    continue
+                            except ValueError:
+                                continue
+                        elif before_dt and not e.observed_at:
+                            continue  # No timestamp, skip
+                        would_delete.append({"summary": e.summary, "type": e.type})
+
+        return {
+            "status": "ok",
+            "command": "forget",
+            "result": {
+                "dry_run": True,
+                "would_delete": would_delete,
+                "count": len(would_delete),
+            },
+        }
+
+    # --- stats ---
+
+    async def stats(self) -> dict[str, Any]:
+        """Backend health and memory statistics."""
+        await self._ensure_init()
+
+        backends: dict[str, Any] = {}
+
+        # Graph
+        if self._backend_ok("graph"):
+            backends["graph"] = {
+                "status": "available",
+                "mode": "remote" if self.config.libsql_auth_token else "local",
+            }
         else:
-            backends["pattern_memory"] = {
+            err = self._init_results.get("graph")
+            backends["graph"] = {
+                "status": "unavailable",
+                "error": err.error.message if err and err.is_err() else "unknown",
+            }
+
+        # Semantic
+        if self._semantic_available():
+            backends["semantic"] = {
+                "status": "available",
+                "mode": self.config.mem0_mode,
+            }
+        elif self.config.mem0_mode:
+            err = self._init_results.get("semantic")
+            backends["semantic"] = {
+                "status": "unavailable",
+                "mode": self.config.mem0_mode,
+                "error": err.error.message if err and err.is_err() else "unknown",
+            }
+        else:
+            backends["semantic"] = {
                 "status": "disabled",
                 "reason": "MEM0_API_KEY or POSTGRES_URL not set",
             }
 
-        # Context memory stats
-        context_error = self._get_init_error("context_memory")
-        if context_error:
-            backends["context_memory"] = {
+        # Session
+        if self._backend_ok("session"):
+            count = await self.session.count()
+            backends["session"] = {"status": "available", "entries": count}
+        else:
+            err = self._init_results.get("session")
+            backends["session"] = {
                 "status": "unavailable",
-                "backend": "jsonl",
-                "error": context_error,
+                "error": err.error.message if err and err.is_err() else "unknown",
+            }
+
+        # Voice (Layer 2)
+        if self.voice._available:
+            backends["voice"] = {
+                "status": "available",
+                "model": VOICE_MODEL,
+                "provider": "inception",
             }
         else:
-            context_count = await self.context.count()
-            backends["context_memory"] = {
-                "status": "available",
-                "backend": "jsonl",
-                "file": str(self.config.context_file),
-                "entries": context_count,
+            backends["voice"] = {
+                "status": "disabled",
+                "reason": "INCEPTION_API_KEY not set",
             }
 
         return {
             "status": "ok",
             "command": "stats",
-            "result": {
-                "version": VERSION,
-                "state_dir": str(self.config.state_dir),
-                "backends": backends,
-            },
+            "result": {"version": VERSION, "backends": backends},
         }
 
     async def close(self) -> None:
         """Close all backends."""
-        await self.fact.close()
-        await self.pattern.close()
-        await self.context.close()
+        await self.graph.close()
+        await self.semantic.close()
+        await self.session.close()
 
 
 # === CLI ===
@@ -732,40 +1187,34 @@ def parse_args() -> argparse.Namespace:
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
         prog="inland-empire",
-        description="Unified memory substrate. Store facts, patterns, and context.",
+        description="Subconscious memory layer. Absorbs observations, surfaces associative memories as hypotheses.",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
 
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    sub = parser.add_subparsers(dest="command", required=True)
 
-    # remember command
-    remember_parser = subparsers.add_parser(
-        "remember",
-        help="Store a memory across configured backends",
-    )
-    remember_parser.add_argument("text", help="The memory text to store")
-    remember_parser.add_argument(
+    # remember
+    rem = sub.add_parser("remember", help="Commit something to memory")
+    rem.add_argument("text", help="The memory text to store")
+    rem.add_argument(
         "--type",
         "-t",
         choices=["fact", "pattern", "context"],
-        default="fact",
-        help="Memory type (default: fact)",
+        default=None,
+        help="Override auto-classification",
     )
 
-    # consult command
-    consult_parser = subparsers.add_parser(
-        "consult",
-        help="Query stored memories",
-    )
-    consult_parser.add_argument("query", help="The query string")
-    consult_parser.add_argument(
+    # consult
+    con = sub.add_parser("consult", help="Actively search stored memories")
+    con.add_argument("query", help="The query string")
+    con.add_argument(
         "--depth",
         "-d",
         choices=["shallow", "deep"],
         default="shallow",
         help="Search depth (default: shallow)",
     )
-    consult_parser.add_argument(
+    con.add_argument(
         "--type",
         "-t",
         choices=["fact", "pattern", "context"],
@@ -773,11 +1222,41 @@ def parse_args() -> argparse.Namespace:
         help="Filter by memory type",
     )
 
-    # stats command
-    subparsers.add_parser(
-        "stats",
-        help="Display backend health and statistics",
+    # surface
+    sur = sub.add_parser("surface", help="Broad associative retrieval")
+    sur.add_argument("context", help="Current context to associate against")
+    sur.add_argument(
+        "--no-voice",
+        action="store_true",
+        help="Disable voice layer (skip Mercury diffusion call)",
     )
+
+    # forget
+    fgt = sub.add_parser("forget", help="Selectively remove memories")
+    fgt.add_argument(
+        "query", nargs="?", default=None, help="Query to match for deletion"
+    )
+    fgt.add_argument(
+        "--type",
+        "-t",
+        choices=["fact", "pattern", "context"],
+        default=None,
+        help="Restrict to one memory type",
+    )
+    fgt.add_argument(
+        "--before",
+        "-b",
+        default=None,
+        help="Forget entries older than duration (e.g., 7d, 24h)",
+    )
+    fgt.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview what would be deleted",
+    )
+
+    # stats
+    sub.add_parser("stats", help="Backend health and memory statistics")
 
     return parser.parse_args()
 
@@ -786,10 +1265,11 @@ async def main() -> int:
     """Main entry point."""
     args = parse_args()
 
-    # Check configuration before running
+    # Optional config check
     try:
         sys.path.insert(0, str(Path(__file__).parent.parent.parent))
         from shared.config_check import require_skill_config
+
         require_skill_config("inland-empire", output_format="json")
     except ImportError:
         pass  # shared module not available, skip check
@@ -797,20 +1277,38 @@ async def main() -> int:
     empire = InlandEmpire()
 
     try:
-        if args.command == "remember":
-            memory_type = MemoryType(args.type) if args.type else None
-            result = await empire.remember(args.text, memory_type)
+        match args.command:
+            case "remember":
+                memory_type = MemoryType(args.type) if args.type else None
+                result = await empire.remember(args.text, memory_type)
 
-        elif args.command == "consult":
-            depth = SearchDepth(args.depth)
-            memory_type = MemoryType(args.type) if args.type else None
-            result = await empire.consult(args.query, depth, memory_type)
+            case "consult":
+                depth = SearchDepth(args.depth)
+                memory_type = MemoryType(args.type) if args.type else None
+                result = await empire.consult(args.query, depth, memory_type)
 
-        elif args.command == "stats":
-            result = await empire.stats()
+            case "surface":
+                result = await empire.surface(
+                    args.context, voice_enabled=not args.no_voice
+                )
 
-        else:
-            result = {"status": "error", "error": {"message": f"Unknown command: {args.command}"}}
+            case "forget":
+                memory_type = MemoryType(args.type) if args.type else None
+                result = await empire.forget(
+                    query=args.query,
+                    memory_type=memory_type,
+                    before=args.before,
+                    dry_run=args.dry_run,
+                )
+
+            case "stats":
+                result = await empire.stats()
+
+            case _:
+                result = {
+                    "status": "error",
+                    "error": {"message": f"Unknown command: {args.command}"},
+                }
 
         print(json.dumps(result, indent=2))
         return 0 if result.get("status") == "ok" else 1

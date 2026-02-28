@@ -721,13 +721,14 @@ class VoiceLayer:
                     content = data["choices"][0]["message"]["content"]
                     return content.strip() if content else None
             except (
+            except (
                 urllib.error.URLError,
                 KeyError,
                 IndexError,
                 json.JSONDecodeError,
                 OSError,
-            ) as exc:
-                print(f"[inland-empire] voice layer error: {exc}", file=sys.stderr)
+            ) as e:
+                print(f"[WARN] VoiceLayer API call failed: {e}", file=sys.stderr)
                 return None
 
         try:

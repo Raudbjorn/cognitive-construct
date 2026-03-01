@@ -299,15 +299,13 @@ def _classify_intent_v2(action: str) -> "ClassificationResult":
 
     Falls back to legacy keyword classification if the engine fails.
     """
-    try:
-        from .classify import classify_intent, ClassificationResult
+    from .classify import classify_intent, ClassificationResult, CandidateScore
 
+    try:
         return classify_intent(action)
     except Exception:
-        # Fallback to legacy
+        logger.warning("New classification engine failed, using legacy fallback", exc_info=True)
         handler = _classify_intent(action)
-        from .classify import ClassificationResult, CandidateScore
-
         return ClassificationResult(
             action=action,
             candidates=[CandidateScore(handler=handler, fused_score=1.0)],
@@ -534,7 +532,7 @@ async def cmd_act(
     """
     try:
         from .classify import classify_intent, format_clarification
-        from .planner import build_plan
+        from .planner import build_plan, build_single_step_plan
         from .preflight import preflight_validate
         from .executor import execute_plan
         from .handlers import register_defaults, register_handler, HandlerConfig
@@ -567,7 +565,12 @@ async def cmd_act(
             return result
 
         # Step 3: Build plan
-        plan = build_plan(action)
+        # When user explicitly overrides handler, build a single-step plan
+        # to honor the override instead of re-classifying via build_plan().
+        if handler:
+            plan = build_single_step_plan(action, classification)
+        else:
+            plan = build_plan(action)
 
         # Step 4: Pre-flight validation (Constitution Rule 3)
         preflight = preflight_validate(plan, confirm=confirm)
@@ -637,6 +640,13 @@ async def cmd_act(
                     ]
                 }
             return result
+
+        # Propagate --confirm to security steps so execution dispatch
+        # knows the user confirmed.
+        if confirm:
+            for step in plan.steps:
+                if step.handler == "security":
+                    step.inputs["confirmed"] = True
 
         # Step 5: Execute plan
         outcomes = await execute_plan(plan)

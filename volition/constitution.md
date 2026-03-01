@@ -11,7 +11,7 @@ intent is ambiguous.
 
 ## Rule 2: NEVER execute a security action without explicit confirmation.
 
-Shodan queries, vulnerability scans, and any action classified as
+Shodan queries, vulnerability scans, and any action classified in the
 `security` category require the `--confirm` flag. This is not overridable
 by confidence score, feedback adjustment, or plan construction. A security
 action with 0.99 confidence still requires confirmation.

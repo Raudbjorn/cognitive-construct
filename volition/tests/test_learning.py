@@ -76,7 +76,12 @@ class TestSafetyConstraintsNotBypassed:
     @patch.object(_cmod, "_get_feedback_scores", return_value={"code_edit": 1.0})
     def test_threshold_not_bypassed_by_feedback(self, mock_fb):
         """Constitution Rule 5: raw fused score must pass threshold independently."""
-        result = classify_intent("", TEST_PROTOTYPES, threshold=0.99, use_feedback=True)
+        # With only 2 prototypes, RRF normalization pushes top score to 1.0,
+        # so we use threshold > 1.0 to guarantee below-threshold before feedback.
+        result = classify_intent(
+            "perform a vague task", TEST_PROTOTYPES, threshold=1.01, use_feedback=True,
+        )
+        assert result.candidates
         assert not result.above_threshold
 
     @patch.object(_cmod, "_get_feedback_scores", return_value={})

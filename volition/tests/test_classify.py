@@ -32,9 +32,9 @@ _spec = importlib.util.spec_from_file_location(
 )
 _mod = importlib.util.module_from_spec(_spec)
 sys.modules["volition.scripts.classify"] = _mod
-sys.modules["volition.scripts"] = type(sys)("volition.scripts")
+sys.modules.setdefault("volition.scripts", type(sys)("volition.scripts"))
 sys.modules["volition.scripts"].__path__ = [str(_scripts_dir)]
-sys.modules["volition"] = type(sys)("volition")
+sys.modules.setdefault("volition", type(sys)("volition"))
 sys.modules["volition"].__path__ = [str(_scripts_dir.parent)]
 _spec.loader.exec_module(_mod)
 
@@ -204,8 +204,12 @@ class TestClassifyIntent:
     @patch.object(_mod, "_get_feedback_scores", return_value={"code_edit": 0.9})
     def test_feedback_cannot_bypass_threshold(self, mock_fb):
         """Constitution Rule 5: feedback cannot push below-threshold above threshold."""
-        # Use a very high threshold that even feedback can't save
-        result = classify_intent("", TEST_PROTOTYPES, threshold=0.99, use_feedback=True)
+        # Use a very high threshold with an ambiguous query so the gated
+        # scoring path is exercised (not the empty-action early return).
+        result = classify_intent(
+            "ambiguous request", TEST_PROTOTYPES, threshold=0.99, use_feedback=True,
+        )
+        assert result.candidates
         assert not result.above_threshold
 
 

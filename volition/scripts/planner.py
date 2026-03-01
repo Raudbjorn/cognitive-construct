@@ -206,7 +206,8 @@ def build_multi_step_plan(
     """Build a multi-step plan by splitting compound actions.
 
     Each sub-action is independently classified and chained with
-    data dependencies.
+    data dependencies. Callers should use build_plan() which auto-detects
+    single vs multi-step.
     """
     from .classify import DEFAULT_PROTOTYPES
 
@@ -214,11 +215,6 @@ def build_multi_step_plan(
         prototypes = DEFAULT_PROTOTYPES
 
     sub_actions = split_compound_action(action)
-
-    if len(sub_actions) <= 1:
-        classification = classify_intent(action, prototypes, threshold)
-        return build_single_step_plan(action, classification, prototypes)
-
     steps: list[PlanStep] = []
     full_classification: ClassificationResult | None = None
 

@@ -89,8 +89,10 @@ def _emit_event(event_type_name: str, payload: dict[str, Any]) -> None:
             source_skill="volition",
             payload=payload,
         )
-    except Exception:
+    except ImportError:
         pass
+    except Exception:
+        logger.debug("Event emission failed: %s", event_type_name, exc_info=True)
 
 
 def _record_feedback(
@@ -119,11 +121,15 @@ def _record_feedback(
             context=context or {},
         )
         collector = FeedbackCollector.get_instance()
-        # Record synchronously by updating scores (async record needs event loop)
+        # Synchronous path: collector.record() is async (needs file I/O + event bus),
+        # but we only need the in-memory score update here. _update_scores is the
+        # only synchronous entry point; if FeedbackCollector adds record_sync(),
+        # switch to that.
         collector._update_scores(signal)
-        collector._recent_signals.append(signal)
-    except Exception:
+    except ImportError:
         pass
+    except Exception:
+        logger.debug("Feedback recording failed for handler '%s'", handler, exc_info=True)
 
 
 def _log_to_inland_empire(plan: ActionPlan, outcomes: list[ActionOutcome]) -> None:
@@ -142,8 +148,10 @@ def _log_to_inland_empire(plan: ActionPlan, outcomes: list[ActionOutcome]) -> No
                 "failures": len(outcomes) - success_count,
             },
         )
-    except Exception:
+    except ImportError:
         pass
+    except Exception:
+        logger.debug("Inland Empire logging failed", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -212,11 +220,11 @@ async def execute_plan(plan: ActionPlan) -> list[ActionOutcome]:
             for fallback_name in step.fallback_chain:
                 attempted_fallbacks.append(fallback_name)
                 result = await _dispatch_handler(fallback_name, step.action, resolved)
-                if result.get("status") != "error":
+                if result.get("status") == "success":
                     break
 
         duration_ms = int((time.perf_counter() - t0) * 1000)
-        is_success = result.get("status") != "error"
+        is_success = result.get("status") == "success"
 
         outcome = ActionOutcome(
             plan_id=plan.plan_id,
@@ -234,9 +242,12 @@ async def execute_plan(plan: ActionPlan) -> list[ActionOutcome]:
         _audit_outcome(outcome)
 
         # Record implicit feedback
-        feedback_status = "success" if is_success else (
-            "fallback_used" if attempted_fallbacks else "error"
-        )
+        if attempted_fallbacks and is_success:
+            feedback_status = "fallback_used"
+        elif is_success:
+            feedback_status = "success"
+        else:
+            feedback_status = "error"
         _record_feedback(step.handler, feedback_status, {
             "plan_id": plan.plan_id,
             "step_id": step.step_id,

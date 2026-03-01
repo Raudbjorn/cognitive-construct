@@ -9,12 +9,11 @@ See SPEC.md Section 3.4 for pass definitions.
 from __future__ import annotations
 
 import sys
-from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .planner import ActionPlan, PlanStep
+from .planner import ActionPlan, CyclicDependencyError, PlanStep, topological_sort
 
 # Ensure shared is importable
 _repo_root = Path(__file__).resolve().parent.parent.parent
@@ -95,8 +94,7 @@ _REQUIRED_INPUTS: dict[str, set[str]] = {
 def _get_capabilities() -> dict[str, dict[str, Any]]:
     """Load capabilities, returning empty dict on failure."""
     try:
-        sys.path.insert(0, str(Path(__file__).resolve().parent))
-        from volition import cmd_capabilities
+        from .volition import cmd_capabilities
 
         return cmd_capabilities()
     except Exception:
@@ -262,59 +260,21 @@ def pass_dependency_check(plan: ActionPlan) -> PassResult:
                     remediation=f"Valid steps: {sorted(step_ids)}",
                 ))
 
-    # Check for circular dependencies via topological sort
-    in_degree: dict[str, int] = {s.step_id: 0 for s in plan.steps}
-    adjacency: dict[str, list[str]] = {s.step_id: [] for s in plan.steps}
-
-    for step in plan.steps:
-        for dep in step.depends_on:
-            if dep in step_ids:
-                adjacency[dep].append(step.step_id)
-                in_degree[step.step_id] += 1
-
-    queue: deque[str] = deque(
-        sid for sid, deg in in_degree.items() if deg == 0
-    )
-    visited = 0
-    while queue:
-        sid = queue.popleft()
-        visited += 1
-        for neighbor in adjacency[sid]:
-            in_degree[neighbor] -= 1
-            if in_degree[neighbor] == 0:
-                queue.append(neighbor)
-
-    if visited != len(plan.steps):
-        cycle_steps = [
-            s.step_id for s in plan.steps
-            if in_degree.get(s.step_id, 0) > 0
-        ]
+    # Check for circular dependencies by reusing planner.topological_sort
+    try:
+        ordered_steps = topological_sort(plan.steps)
+        ordered = [s.step_id for s in ordered_steps]
+    except CyclicDependencyError as e:
         flags.append(PreflightFlag(
             type="circular_dependency",
             severity="CRITICAL",
-            step_id=cycle_steps[0] if cycle_steps else "unknown",
-            description=f"Circular dependency among: {cycle_steps}",
+            step_id=str(e).split(":")[-1].strip().split(",")[0].strip(" '[]") if str(e) else "unknown",
+            description=str(e),
             remediation="Remove dependency cycle",
         ))
+        ordered = [s.step_id for s in plan.steps]  # best-effort ordering
 
     # Check input references are from prior steps (topological ordering)
-    ordered: list[str] = []
-    in_deg2: dict[str, int] = {s.step_id: 0 for s in plan.steps}
-    adj2: dict[str, list[str]] = {s.step_id: [] for s in plan.steps}
-    for step in plan.steps:
-        for dep in step.depends_on:
-            if dep in step_ids:
-                adj2[dep].append(step.step_id)
-                in_deg2[step.step_id] += 1
-    q2: deque[str] = deque(sid for sid, d in in_deg2.items() if d == 0)
-    while q2:
-        sid = q2.popleft()
-        ordered.append(sid)
-        for n in adj2[sid]:
-            in_deg2[n] -= 1
-            if in_deg2[n] == 0:
-                q2.append(n)
-
     position = {sid: idx for idx, sid in enumerate(ordered)}
     for step in plan.steps:
         step_pos = position.get(step.step_id, -1)

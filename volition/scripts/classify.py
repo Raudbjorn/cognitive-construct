@@ -168,7 +168,10 @@ def _get_feedback_scores() -> dict[str, float]:
         from shared.feedback import FeedbackCollector
 
         return FeedbackCollector.get_instance().get_source_scores()
+    except ImportError:
+        return {}
     except Exception:
+        logger.debug("Feedback score retrieval failed", exc_info=True)
         return {}
 
 

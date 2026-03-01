@@ -280,7 +280,7 @@ def _redact_shodan_results(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def _classify_intent(action: str) -> str:
-    """Classify action intent based on keywords."""
+    """Classify action intent based on keywords (legacy fallback)."""
     action_lower = action.lower()
     scores = {category: 0 for category in INTENT_KEYWORDS}
 
@@ -292,6 +292,27 @@ def _classify_intent(action: str) -> str:
     # Return category with highest score, default to llm_call
     best = max(scores, key=lambda k: scores[k])
     return best if scores[best] > 0 else "llm_call"
+
+
+def _classify_intent_v2(action: str) -> "ClassificationResult":
+    """Classify intent using the new embedding + keyword fusion engine.
+
+    Falls back to legacy keyword classification if the engine fails.
+    """
+    from .classify import classify_intent, ClassificationResult, CandidateScore
+
+    try:
+        return classify_intent(action)
+    except Exception:
+        logger.warning("New classification engine failed, using legacy fallback", exc_info=True)
+        handler = _classify_intent(action)
+        return ClassificationResult(
+            action=action,
+            candidates=[CandidateScore(handler=handler, fused_score=1.0)],
+            selected=handler,
+            confidence=1.0,
+            above_threshold=True,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -497,13 +518,182 @@ async def _handle_security_query(
 # ---------------------------------------------------------------------------
 
 
-async def cmd_act(action: str, handler: str | None = None) -> dict[str, Any]:
-    """Execute a general action with automatic routing."""
-    selected_handler = handler or _classify_intent(action)
+async def cmd_act(
+    action: str,
+    handler: str | None = None,
+    confirm: bool = False,
+    verbose: bool = False,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Execute a general action with automatic routing.
 
+    Uses the new classify → plan → validate → execute pipeline.
+    Falls back to legacy behavior on import failure.
+    """
+    try:
+        from .classify import classify_intent, format_clarification
+        from .planner import build_plan, build_single_step_plan
+        from .preflight import preflight_validate
+        from .executor import execute_plan
+        from .handlers import register_defaults, register_handler, HandlerConfig
+
+        # Register default handlers and wire dispatch functions
+        register_defaults()
+        _wire_handler_dispatch()
+
+        # Step 1: Classify intent
+        classification = classify_intent(action)
+        if handler:
+            classification.selected = handler
+            classification.above_threshold = True
+
+        # Step 2: Confidence gating (Constitution Rule 1)
+        if not classification.above_threshold:
+            result = format_clarification(classification)
+            if verbose:
+                result["classification"] = {
+                    "candidates": [
+                        {
+                            "handler": c.handler,
+                            "embedding_score": round(c.embedding_score, 3),
+                            "keyword_score": round(c.keyword_score, 3),
+                            "fused_score": round(c.fused_score, 3),
+                        }
+                        for c in classification.candidates
+                    ]
+                }
+            return result
+
+        # Step 3: Build plan
+        # When user explicitly overrides handler, build a single-step plan
+        # to honor the override instead of re-classifying via build_plan().
+        if handler:
+            plan = build_single_step_plan(action, classification)
+        else:
+            plan = build_plan(action)
+
+        # Step 4: Pre-flight validation (Constitution Rule 3)
+        preflight = preflight_validate(plan, confirm=confirm)
+
+        if verbose:
+            preflight_summary = {
+                "plan_id": plan.plan_id,
+                "status": preflight.status,
+                "flags": [
+                    {
+                        "type": f.type,
+                        "severity": f.severity,
+                        "step_id": f.step_id,
+                        "description": f.description,
+                    }
+                    for f in preflight.all_flags
+                ],
+            }
+
+        if preflight.has_critical:
+            result = {
+                "status": "blocked",
+                "message": "Pre-flight validation failed with CRITICAL flags",
+                "flags": [
+                    {
+                        "type": f.type,
+                        "severity": f.severity,
+                        "step_id": f.step_id,
+                        "description": f.description,
+                        "remediation": f.remediation,
+                    }
+                    for f in preflight.all_flags
+                    if f.severity == "CRITICAL"
+                ],
+            }
+            if verbose:
+                result["preflight"] = preflight_summary
+            return result
+
+        # Dry run: show plan without executing
+        if dry_run:
+            result = {
+                "status": "dry_run",
+                "plan_id": plan.plan_id,
+                "handler": classification.selected,
+                "confidence": round(classification.confidence, 3),
+                "steps": [
+                    {
+                        "step_id": s.step_id,
+                        "handler": s.handler,
+                        "action": s.action,
+                        "depends_on": s.depends_on,
+                        "risk_level": s.risk_level,
+                    }
+                    for s in plan.steps
+                ],
+                "preflight": preflight.status,
+            }
+            if verbose:
+                result["classification"] = {
+                    "candidates": [
+                        {
+                            "handler": c.handler,
+                            "fused_score": round(c.fused_score, 3),
+                        }
+                        for c in classification.candidates
+                    ]
+                }
+            return result
+
+        # Propagate --confirm to security steps so execution dispatch
+        # knows the user confirmed.
+        if confirm:
+            for step in plan.steps:
+                if step.handler == "security":
+                    step.inputs["confirmed"] = True
+
+        # Step 5: Execute plan
+        outcomes = await execute_plan(plan)
+
+        # Build response
+        all_ok = all(o.status == "success" for o in outcomes)
+        result = {
+            "status": "success" if all_ok else "error",
+            "handler": classification.selected,
+            "confidence": round(classification.confidence, 3),
+            "plan_id": plan.plan_id,
+            "outcomes": [
+                {
+                    "step_id": o.step_id,
+                    "handler": o.handler,
+                    "status": o.status,
+                    "summary": o.output_summary,
+                    "duration_ms": o.duration_ms,
+                    "fallbacks_attempted": o.fallbacks_attempted,
+                }
+                for o in outcomes
+            ],
+        }
+        if verbose:
+            result["classification"] = {
+                "candidates": [
+                    {
+                        "handler": c.handler,
+                        "embedding_score": round(c.embedding_score, 3),
+                        "keyword_score": round(c.keyword_score, 3),
+                        "fused_score": round(c.fused_score, 3),
+                    }
+                    for c in classification.candidates
+                ]
+            }
+            result["preflight"] = preflight_summary
+        return result
+
+    except ImportError:
+        # Fall back to legacy behavior
+        selected_handler = handler or _classify_intent(action)
+        return await _cmd_act_legacy(selected_handler, action)
+
+
+async def _cmd_act_legacy(selected_handler: str, action: str) -> dict[str, Any]:
+    """Legacy cmd_act behavior when new modules aren't available."""
     if selected_handler == "code_edit":
-        # For act command, we need to extract symbol/change from natural language
-        # This is a simplified implementation
         result = await _handle_llm_call(
             f"Analyze this request and suggest specific code changes: {action}",
             tag="coding",
@@ -513,7 +703,6 @@ async def cmd_act(action: str, handler: str | None = None) -> dict[str, Any]:
     elif selected_handler == "web_search":
         result = await _handle_web_search(action)
     elif selected_handler == "security":
-        # Security requires explicit confirmation via query command
         result = Ok(
             ActionResult(
                 status="error",
@@ -528,6 +717,51 @@ async def cmd_act(action: str, handler: str | None = None) -> dict[str, Any]:
         return {"status": "error", "code": result.error.code, "message": result.error.message}
 
     return asdict(result.value)
+
+
+def _wire_handler_dispatch() -> None:
+    """Wire backend handler functions into the registry."""
+    from .handlers import register_handler, HandlerConfig, get_handler
+
+    async def _dispatch_code_edit(action: str, inputs: dict[str, Any]) -> dict[str, Any]:
+        result = await _handle_llm_call(
+            f"Analyze this request and suggest specific code changes: {action}",
+            tag="coding",
+        )
+        if result.is_err():
+            return {"status": "error", "message": result.error.message}
+        return asdict(result.value)
+
+    async def _dispatch_llm_call(action: str, inputs: dict[str, Any]) -> dict[str, Any]:
+        result = await _handle_llm_call(action)
+        if result.is_err():
+            return {"status": "error", "message": result.error.message}
+        return asdict(result.value)
+
+    async def _dispatch_web_search(action: str, inputs: dict[str, Any]) -> dict[str, Any]:
+        result = await _handle_web_search(action)
+        if result.is_err():
+            return {"status": "error", "message": result.error.message}
+        return asdict(result.value)
+
+    async def _dispatch_security(action: str, inputs: dict[str, Any]) -> dict[str, Any]:
+        confirm = inputs.get("confirm", False)
+        result = await _handle_security_query(action, confirm=confirm)
+        if result.is_err():
+            return {"status": "error", "message": result.error.message}
+        return asdict(result.value)
+
+    # Wire dispatch functions into existing handlers
+    for name, fn in [
+        ("code_edit", _dispatch_code_edit),
+        ("text_edit", _dispatch_code_edit),  # text_edit fallback uses same fn
+        ("llm_call", _dispatch_llm_call),
+        ("web_search", _dispatch_web_search),
+        ("security", _dispatch_security),
+    ]:
+        handler = get_handler(name)
+        if handler:
+            handler.dispatch_fn = fn
 
 
 async def cmd_edit(symbol: str, change: str, project: str = ".", fallback: bool = False) -> dict[str, Any]:
@@ -643,7 +877,10 @@ def _build_parser() -> argparse.ArgumentParser:
     # act command
     act_parser = subparsers.add_parser("act", help="Execute a general action")
     act_parser.add_argument("action", help="Action to perform (natural language)")
-    act_parser.add_argument("--handler", choices=["code_edit", "llm_call", "web_search"], help="Override automatic routing")
+    act_parser.add_argument("--handler", choices=["code_edit", "llm_call", "web_search", "security"], help="Override automatic routing")
+    act_parser.add_argument("--confirm", action="store_true", help="Confirm security actions")
+    act_parser.add_argument("--verbose", action="store_true", help="Show full classification breakdown")
+    act_parser.add_argument("--dry-run", action="store_true", help="Show plan without executing")
 
     # edit command
     edit_parser = subparsers.add_parser("edit", help="Perform semantic code edit")
@@ -688,8 +925,14 @@ def main() -> None:
 
     try:
         if args.command == "act":
-            result = asyncio.run(cmd_act(args.action, handler=args.handler))
-            code = result.get("code", ExitCode.SUCCESS if result.get("status") == "success" else 1)
+            result = asyncio.run(cmd_act(
+                args.action,
+                handler=args.handler,
+                confirm=args.confirm,
+                verbose=args.verbose,
+                dry_run=getattr(args, "dry_run", False),
+            ))
+            code = result.get("code", ExitCode.SUCCESS if result.get("status") in ("success", "dry_run") else 1)
             _output_json(result, code)
 
         elif args.command == "edit":

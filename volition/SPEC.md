@@ -6,7 +6,7 @@
 
 **Version:** 0.1.0-draft
 **Status:** Design
-**Depends on:** `shared.embeddings`, `shared.fusion`, `shared.events`, `shared.membrane`, `shared.synergies`, `shared.feedback`
+**Depends on:** `shared.embeddings`, `shared.fusion` *(added in current cycle, not yet committed)*, `shared.events`, `shared.membrane`, `shared.synergies`, `shared.feedback`
 
 ---
 
@@ -124,7 +124,8 @@ edit), I want Volition to optionally run a Rhetoric deliberation before acting.*
 
 EARS acceptance:
 > WHEN an action plan includes a step with `risk_level >= HIGH`, and the
-> `RHETORIC_PREFLIGHT` feature flag is enabled, the system SHALL request
+> `RHETORIC_PREFLIGHT` feature flag is enabled (to be registered in
+> `shared/feature_flags.py`), the system SHALL request
 > a Rhetoric deliberation via the synergy bus before proceeding.
 
 ### 2.2 Scope
@@ -152,7 +153,7 @@ EARS acceptance:
 | NFR-3 | Availability | Classification SHALL degrade to keyword-only if embedding model is unavailable |
 | NFR-4 | Auditability | Every action plan and its outcome SHALL be recorded in `~/.volition/audit.log` |
 | NFR-5 | Determinism | Given identical input, classification scores SHALL be identical (no randomness) |
-| NFR-6 | Safety | Security-category actions SHALL always require explicit confirmation (R.22.1) |
+| NFR-6 | Safety | Security-category actions SHALL always require explicit confirmation (Constitution Rule 2) |
 | NFR-7 | Memory | Embedding model footprint SHALL not exceed 16MB resident (Model2Vec: ~8MB) |
 
 ---
@@ -310,9 +311,9 @@ Those are Phase 2 concerns.
       {
         "type": "unconfirmed_security_action",
         "severity": "CRITICAL",
-        "step_id": "step-3",
-        "description": "Security query requires --confirm flag",
-        "remediation": "Add --confirm flag or remove the security step"
+        "step_id": "step-2",
+        "description": "Code edit targets security-sensitive module without --confirm flag",
+        "remediation": "Add --confirm flag or reduce step risk_level"
       }
     ]},
     "dependency_check": {"status": "pass", "flags": []}
@@ -439,6 +440,7 @@ def _pass_capability(plan: ActionPlan) -> list[PreflightFlag]:
     flags = []
     capabilities = cmd_capabilities()  # existing function
     for step in plan.steps:
+        # Mapping defined in Task 1.2: {"code_edit": "serena", "llm_call": "cross_llm", ...}
         cap = capabilities.get(HANDLER_TO_CAPABILITY[step.handler])
         if cap is None or cap["status"] == "unavailable":
             flags.append(PreflightFlag(
@@ -494,8 +496,10 @@ async def execute_plan(plan: ActionPlan) -> list[ActionOutcome]:
         result = await dispatch(step.handler, step.action, resolved_inputs)
 
         # Fallback chain on failure
+        attempted_fallbacks: list[str] = []
         if result.is_err() and step.fallback_chain:
             for fallback in step.fallback_chain:
+                attempted_fallbacks.append(fallback)
                 result = await dispatch(fallback, step.action, resolved_inputs)
                 if result.is_ok():
                     break
@@ -507,6 +511,7 @@ async def execute_plan(plan: ActionPlan) -> list[ActionOutcome]:
             handler=step.handler,
             status="success" if result.is_ok() else "error",
             output_summary=summarize(result),
+            fallbacks_attempted=attempted_fallbacks,
         )
         outcomes.append(outcome)
         step_outputs[step.step_id] = result
@@ -566,8 +571,9 @@ Volition integrates with the Cognitive Construct through three channels:
 
 **Event bus** (`shared.events`): Volition emits `action.started`,
 `action.completed`, `action.failed`, `action.confirmed`, `action.rejected`.
-These are defined in `shared/events.py:52-56` and absorbed by Inland Empire
-for memory storage.
+These are defined in `shared/events.py:52-56`. Inland Empire absorbs
+`action.completed` for memory storage; `action.failed` routes only to the
+audit log (see diagram below).
 
 **Membrane** (`shared.membrane`): Volition's membrane
 (`shared/membrane.py:342-365`) absorbs `rhetoric.decision.made` (when
@@ -623,8 +629,9 @@ The user can always ask "why did you choose that handler?"
 ### Rule 5: NEVER let feedback adjustment override safety constraints.
 
 Feedback weights can boost or reduce handler scores, but they cannot:
-- Push a below-threshold score above threshold (the raw fused score
-  must independently exceed threshold)
+- Push a below-threshold score above threshold (the `raw_fused_score`
+  is preserved before feedback adjustment and must independently exceed
+  threshold)
 - Bypass confirmation requirements for security actions
 - Skip pre-flight validation passes
 
@@ -661,7 +668,7 @@ status is written after completion or failure.
 | 1.8 | Wire `classify_intent()` into `cmd_act()` replacing `_classify_intent()` | `volition/scripts/volition.py` |
 | 1.9 | Tests: classification accuracy on 20+ test cases, threshold behavior | `volition/tests/test_classify.py` (new) |
 
-**Depends on:** `shared.embeddings` (exists), `shared.fusion` (exists)
+**Depends on:** `shared.embeddings` (exists), `shared.fusion` (exists, untracked)
 
 ### Phase 2: Action Plan Construction
 
@@ -732,7 +739,7 @@ status is written after completion or failure.
 | 6.2 | Add `--verbose` flag showing full classification breakdown | `volition/scripts/volition.py` |
 | 6.3 | Add `--dry-run` flag showing plan without executing | `volition/scripts/volition.py` |
 | 6.4 | Update membrane definition in `shared/membrane.py` if new event types needed | `shared/membrane.py` |
-| 6.5 | Write constitution.md | `volition/constitution.md` (new) |
+| 6.5 | Extract Section 4 into canonical constitution.md | `volition/constitution.md` (new) |
 | 6.6 | End-to-end integration tests | `volition/tests/test_integration.py` (new) |
 
 **Depends on:** All prior phases
@@ -785,7 +792,7 @@ positive signals to restore the score.
 matter more than old ones. Add a `VOLITION_FEEDBACK_DECAY` parameter
 (default 0.95) that multiplies each signal's weight by its age in decay
 periods. Alternatively, detect backend recovery via the membrane's
-`source.restored` event and reset the handler's feedback window.
+`encyclopedia.source.restored` event and reset the handler's feedback window.
 
 ### Q5: Rhetoric Integration Overhead
 

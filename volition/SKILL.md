@@ -24,7 +24,7 @@ Volition replaces reactive keyword matching with semantic understanding. When yo
 
 Every action flows through this pipeline:
 
-```
+```text
 user prompt → Intent Classifier (embedding + keyword fusion)
                     |
            confidence >= threshold?
@@ -103,8 +103,8 @@ Query external services for information.
 # Web search
 python3 volition.py query web "latest Python 3.13 features"
 
-# Security query (prompts for confirmation)
-python3 volition.py query security "exposed MongoDB instances in AS12345"
+# Security query (explicit confirmation required)
+python3 volition.py query security "exposed MongoDB instances in AS12345" --confirm
 
 # LLM consultation
 python3 volition.py query llm "best practices for JWT token rotation" --tag coding
@@ -138,12 +138,13 @@ When the classifier is not confident enough to route (fused score below threshol
 
 ```json
 {
-  "status": "clarification_needed",
-  "message": "Ambiguous intent. Did you mean:",
+  "status": "clarification_required",
+  "message": "Intent is ambiguous. Did you mean one of these?",
   "candidates": [
-    {"handler": "code_edit", "score": 0.52},
-    {"handler": "security", "score": 0.48}
-  ]
+    {"handler": "code_edit", "confidence": 0.52, "embedding_score": 0.55, "keyword_score": 0.49},
+    {"handler": "security", "confidence": 0.48, "embedding_score": 0.46, "keyword_score": 0.51}
+  ],
+  "action": "your original prompt text"
 }
 ```
 
@@ -185,7 +186,7 @@ When a handler fails, Volition attempts fallbacks before giving up:
 - `code_edit` falls back to `text_edit`
 - Other handlers have no fallbacks (failure is reported immediately)
 
-If all fallbacks are exhausted, the entire plan aborts — no partial execution (Constitution Rule 6).
+If all fallbacks are exhausted, Volition stops executing any remaining steps in the plan; previously completed steps are not rolled back (Constitution Rule 6).
 
 ## Security Constraints (R.22-R.23)
 
@@ -193,7 +194,7 @@ If all fallbacks are exhausted, the entire plan aborts — no partial execution 
 
 Shodan queries are **restricted operations** with mandatory safeguards:
 
-1. **Explicit --confirm Flag Required (R.22.1)**: Every Shodan query requires `--confirm`. No bypass:
+1. **Explicit --confirm Flag Required (R.22.1)**: Every Shodan query requires `--confirm` to execute. Without it, the query returns a `confirmation_required` status with guidance:
    ```bash
    python3 volition.py query security "exposed MongoDB instances" --confirm
    ```
@@ -204,11 +205,11 @@ Shodan queries are **restricted operations** with mandatory safeguards:
    NOCP_FLAG_SHODAN_ENABLED=false
    ```
 
-3. **Data Redaction (R.22.3)**: IP addresses in results are partially redacted.
+3. **Data Redaction (R.22.3)**: IP addresses in results are partially redacted (e.g., `192.168.xxx.xxx`).
 
-4. **Audit Logging with Severity (R.22.4)**: All queries logged to `~/.volition/shodan_audit.jsonl`.
+4. **Audit Logging with Severity (R.22.4)**: All queries are logged to `~/.volition/shodan_audit.jsonl` with fields: `requester`, `query`, `target`, `result_count`, `severity`, and `timestamp`.
 
-5. **Rate Limiting (R.23.1)**: Maximum 10 queries per hour.
+5. **Rate Limiting (R.23.1)**: Maximum 10 queries per hour. Exceeding this limit returns an error with the remaining cooldown time.
 
 6. **Clear Error on Unconfirmed (R.23.2)**: Unconfirmed queries return explicit guidance.
 
@@ -275,11 +276,7 @@ Volition integrates with other Cognitive Construct skills:
 - **← Rhetoric**: When `RHETORIC_PREFLIGHT` is enabled, high-risk steps trigger a Rhetoric deliberation before execution
 - **← Encyclopedia**: Code edits can fetch documentation context
 
-Synergies operate transparently — if a downstream skill is unavailable, Volition continues without error. Control via feature flag:
-
-```bash
-NOCP_FLAG_VOLITION_INLAND_EMPIRE_SYNERGY=true
-```
+Synergies operate transparently — if a downstream skill is unavailable (e.g., `shared.synergies` import fails), Volition continues without error. No feature flag is required; synergies are always attempted when the corresponding module is available.
 
 ## Constitution
 

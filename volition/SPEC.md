@@ -900,6 +900,7 @@ volition/
     cross-llm-mcp/     <- existing backend
     mcp-shodan/        <- existing backend
     openai-websearch-mcp/ <- existing backend
+    mcp-server-openai/ <- existing backend
     serena/            <- existing backend
   tests/
     test_classify.py   <- Phase 1 tests

@@ -11,7 +11,7 @@ Symbolic argumentation engine based on Stephen Toulmin's model. Decomposes argum
 python3 rhetoric/scripts/rhetoric.py demo
 
 # Validate a pre-built argument graph (no API needed)
-python3 rhetoric/scripts/rhetoric.py validate examples/graph.json
+python3 rhetoric/scripts/rhetoric.py validate path/to/graph.json
 
 # Analyze argument structure (requires INCEPTION_API_KEY)
 python3 rhetoric/scripts/rhetoric.py plan "PostgreSQL 16 improves performance for most workloads"

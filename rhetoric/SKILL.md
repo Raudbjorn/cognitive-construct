@@ -21,9 +21,9 @@ metadata:
 Decompose a natural-language argument into a Toulmin graph, validate it through four passes, select a delivery strategy, and optionally generate a structural analogy via Mercury.
 
 ```bash
-python3 scripts/rhetoric.py plan "PostgreSQL 16 improves performance for most workloads"
-python3 scripts/rhetoric.py plan "Rust is best for all backends" --contradict "Compile times are slow" "Python has larger ecosystem"
-python3 scripts/rhetoric.py plan "Microservices improve reliability" --no-bridge
+python3 rhetoric/scripts/rhetoric.py plan "PostgreSQL 16 improves performance for most workloads"
+python3 rhetoric/scripts/rhetoric.py plan "Rust is best for all backends" --contradict "Compile times are slow" "Python has larger ecosystem"
+python3 rhetoric/scripts/rhetoric.py plan "Microservices improve reliability" --no-bridge
 ```
 
 **Requires:** `INCEPTION_API_KEY` environment variable (Mercury API)
@@ -36,14 +36,14 @@ python3 scripts/rhetoric.py plan "Microservices improve reliability" --no-bridge
 Validate a pre-built Toulmin argument graph from a JSON file. No API needed.
 
 ```bash
-python3 scripts/rhetoric.py validate examples/hasty-generalization.json
+python3 rhetoric/scripts/rhetoric.py validate path/to/graph.json
 ```
 
 ### `demo`
 Run built-in demonstration cases showcasing the validation engine. No API needed.
 
 ```bash
-python3 scripts/rhetoric.py demo
+python3 rhetoric/scripts/rhetoric.py demo
 ```
 
 Demonstrates detection of: valid induction, hasty generalization, formal fallacies (affirming the consequent), cherry-picking (cross-reference integrity), and surface analogies.

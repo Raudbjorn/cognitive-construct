@@ -228,15 +228,15 @@ def _verify_structural_match(
     graph: ArgumentGraph,
     justification: str,
 ) -> bool:
-    """Verify that the analogy's mapping covers the argument's structure.
+    """Heuristic check that the analogy is structurally grounded.
 
     Checks:
     1. Does the mapping have at least 2 elements? (non-trivial)
     2. Does the justification reference structural/causal language?
-    3. Are the source and target domains actually different?
 
-    This is a heuristic check for the PoC. Production would use the full
-    isomorphism verification from the spec.
+    This is a heuristic check for the PoC. Production would add role
+    coverage verification and source/target domain distance enforcement
+    per the full isomorphism spec.
     """
     if len(mapping) < 2:
         return False

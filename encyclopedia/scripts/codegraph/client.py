@@ -88,7 +88,7 @@ class CodeGraphClient:
         result = client.find_function("process_data")
         if result.is_ok():
             for func in result.value:
-                print(f"{func.name} at {func.path}:{func.line_number}")
+                print(f"{func.name} at {func.file_path}:{func.line_number}")
 
         # Find callers
         result = client.who_calls("process_data")

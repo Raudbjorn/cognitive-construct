@@ -344,9 +344,10 @@ class CppTreeSitterParser:
             capture_name = match[1]
             node = match[0]
 
-            if capture_name == 'name':
-                assignment_node = node.parent
-                lambda_node = assignment_node.child_by_field_name('value')
+            if capture_name != 'name':
+                continue
+            assignment_node = node.parent
+            lambda_node = assignment_node.child_by_field_name('value')
             if lambda_node is None or lambda_node.type != 'lambda_expression':
                 continue
 

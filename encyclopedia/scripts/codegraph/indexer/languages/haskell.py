@@ -209,7 +209,7 @@ class HaskellTreeSitterParser:
                         params_node = None
                         for child in node.children:
                             if child.type == "function_value_parameters":
-                                param_node = child
+                                params_node = child
                                 break
                         parameters = []
                         if params_node:
@@ -457,7 +457,7 @@ class HaskellTreeSitterParser:
                     continue
         return calls
 
-def pre_scan_haskell(file: list[Path], parser_wrapper) -> dict:
+def pre_scan_haskell(files: list[Path], parser_wrapper) -> dict:
     name_to_files = {}
     for path in files:
         try:

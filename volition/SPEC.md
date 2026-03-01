@@ -899,7 +899,6 @@ volition/
     handlers.py        <- handler registry and fallback config (new, Phase 4)
     cross-llm-mcp/     <- existing backend
     mcp-shodan/        <- existing backend
-    mcp-server-openai/ <- existing backend
     openai-websearch-mcp/ <- existing backend
     serena/            <- existing backend
   tests/

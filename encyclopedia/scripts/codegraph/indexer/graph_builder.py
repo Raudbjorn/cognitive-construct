@@ -116,8 +116,6 @@ class GraphBuilder:
             # '.h': TreeSitterParser('c'), # Need to write an algo for distinguishing C vs C++ headers
             '.java': TreeSitterParser('java'),
             '.rb': TreeSitterParser('ruby'),
-            '.java': TreeSitterParser('java'),
-            '.rb': TreeSitterParser('ruby'),
             '.cs': TreeSitterParser('c_sharp'),
             '.php': TreeSitterParser('php'),
             '.kt': TreeSitterParser('kotlin'),
@@ -237,13 +235,13 @@ class GraphBuilder:
         if '.c' in files_by_lang:
             from .languages import c as c_lang_module
             imports_map.update(c_lang_module.pre_scan_c(files_by_lang['.c'], self.parsers['.c']))
-        elif '.java' in files_by_lang:
+        if '.java' in files_by_lang:
             from .languages import java as java_lang_module
             imports_map.update(java_lang_module.pre_scan_java(files_by_lang['.java'], self.parsers['.java']))
-        elif '.rb' in files_by_lang:
+        if '.rb' in files_by_lang:
             from .languages import ruby as ruby_lang_module
             imports_map.update(ruby_lang_module.pre_scan_ruby(files_by_lang['.rb'], self.parsers['.rb']))
-        elif '.cs' in files_by_lang:
+        if '.cs' in files_by_lang:
             from .languages import csharp as csharp_lang_module
             imports_map.update(csharp_lang_module.pre_scan_csharp(files_by_lang['.cs'], self.parsers['.cs']))
         if '.kt' in files_by_lang:
@@ -279,7 +277,6 @@ class GraphBuilder:
 
     # First pass to add file and its contents
     def add_file_to_graph(self, file_data: Dict, repo_name: str, imports_map: dict):
-        info_logger("Executing add_file_to_graph with my change!")
         """Adds a file and its contents within a single, unified session."""
         file_path_str = str(Path(file_data['path']).resolve())
         file_name = Path(file_path_str).name
@@ -1083,7 +1080,6 @@ class GraphBuilder:
             error_message=str(e)
             error_logger(f"Failed to build graph for path {path}: {error_message}")
             if job_id:
-                '''checking if the repo got deleted '''
                 if "no such file found" in error_message or "deleted" in error_message or "not found" in error_message:
                     status=JobStatus.CANCELLED
                     

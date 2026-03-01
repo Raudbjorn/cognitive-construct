@@ -58,14 +58,19 @@ def compose_embedding_text(
 ) -> str:
     """Build the text string to embed from node properties.
 
-    Format: ``"{type} {name}. {docstring_first_3_lines}. in {context}"``
+    Format: ``"{type} {name}: {signature}. {docstring_first_3_lines}. in {context}"``
     Capped at 512 characters.
     """
     parts: list[str] = []
 
-    if node_type:
-        parts.append(node_type)
-    parts.append(name)
+    prefix = f"{node_type} {name}" if node_type else name
+    parts.append(prefix)
+
+    # Use the first line of source as a signature hint
+    if source:
+        first_line = source.strip().splitlines()[0].strip()
+        if first_line:
+            parts.append(f": {first_line}")
 
     if docstring:
         lines = docstring.strip().splitlines()
@@ -76,7 +81,7 @@ def compose_embedding_text(
     if context:
         parts.append(f". in {context}")
 
-    text = " ".join(parts)
+    text = "".join(parts)
     return text[:512]
 
 

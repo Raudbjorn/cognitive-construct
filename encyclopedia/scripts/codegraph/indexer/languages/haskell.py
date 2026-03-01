@@ -96,9 +96,9 @@ class HaskellTreeSitterParser:
                 elif capture_name == "classes":
                     parsed_classes.extend(self._parse_classes(results, source_code, path))
                 elif capture_name == "imports":
-                    parsed_classes.extend(self._parse_imports(results, source_code))
+                    parsed_imports.extend(self._parse_imports(results, source_code))
                 elif capture_name == "calls":
-                    parsed_classes.extend(self._parse_calls(results, source_code, path, parsed_variables))
+                    parsed_calls.extend(self._parse_calls(results, source_code, path, parsed_variables))
 
             return {
                 "path": str(path),
@@ -238,7 +238,7 @@ class HaskellTreeSitterParser:
                     continue
         return functions
 
-def _parse_classes(self, captures: list, source_code: str, path: Path) -> list[Dict[str, Any]]:
+    def _parse_classes(self, captures: list, source_code: str, path: Path) -> list[Dict[str, Any]]:
         classes = []
         seen_nodes = set()
 
@@ -304,7 +304,8 @@ def _parse_classes(self, captures: list, source_code: str, path: Path) -> list[D
                     error_logger(f"Error parsing class in {path}: {e}")
                     continue
             return classes
-def _parse_variables(self, captures: list, source_code: str, path: Path) -> list[Dict[str, Any]]:
+
+    def _parse_variables(self, captures: list, source_code: str, path: Path) -> list[Dict[str, Any]]:
         variables = []
         seen_nodes = set()
 
@@ -362,7 +363,8 @@ def _parse_variables(self, captures: list, source_code: str, path: Path) -> list
                     continue
 
         return variables
-def _parse_imports(self, captures:list, source_code: str) -> list[dict]:
+
+    def _parse_imports(self, captures: list, source_code: str) -> list[dict]:
         imports = []
         for node, capture_name in captures:
             if capture_name == "import":
@@ -385,127 +387,75 @@ def _parse_imports(self, captures:list, source_code: str) -> list[dict]:
                 except Exception as e:
                     continue
         return imports
-def _parse_calls(self, captures: list, source_code: str, path: Path, variables: list[Dict[str,Any]]= []) -> list[Dict[str, Any]]:
-    calls = []
-    seen_calls = set()
 
-    # Index variables for fast lookup: (name, context) -> type 
-    var_map = {}
-    for v in variables:
-        key = (v['name'], v['context'])
-        var_map[key] = v['type']
-        # Fallback for null context or partial match could be added
-        # For class props: (name, class_context) might work if local lookup fails?
-    for node, capture_name in captures:
-        if capture_name == "call_node":
-            try:
-                # navigation_expression check
+    def _parse_calls(self, captures: list, source_code: str, path: Path, variables: list[Dict[str, Any]] = []) -> list[Dict[str, Any]]:
+        calls = []
+        seen_calls = set()
 
-                start_line = node.start_point[0] + 1
+        var_map = {}
+        for v in variables:
+            key = (v['name'], v['context'])
+            var_map[key] = v['type']
 
-                # Get function name from call_expression
-                func_name = "unknown"
-                base_obj = None
+        for node, capture_name in captures:
+            if capture_name == "call_node":
+                try:
+                    start_line = node.start_point[0] + 1
+                    func_name = "unknown"
+                    call_name = "unknown"
+                    base_obj = None
 
-                # call_expression usually has children:
-                # simple_identifier (func name)
-                # or naviagtion_expression (obj.method)
+                    children = node.children
+                    first_child = children[0]
 
-                # Heuristic for base object:
-                # If navigation_expression -> child[0] is base, child[1] is suffix (method)
+                    if first_child.type == "simple_identifier":
+                        call_name = self._get_node_text(first_child)
+                    elif first_child.type == "navigation_expression":
+                        nav_children = first_child.children
+                        if len(nav_children) >= 2:
+                            operand = nav_children[0]
+                            suffix = nav_children[-1]
 
-                # We need to look deeper into the call_expression structure.
-                # call_expression -> (simple_identifier)
-                # OR call_expression -> (navigation_expression (simple_identifier) (navigation_suffix (simple_identifier) ...))
-                # OR call_expression -> (navigation_expression (call_expression) ...) (chained)
+                            if suffix.type == "navigation_suffix":
+                                for c in suffix.children:
+                                    if c.type == "simple_identifier":
+                                        call_name = self._get_node_text(c)
+                                        break
+                            elif suffix.type == "simple_identifier":
+                                call_name = self._get_node_text(suffix)
+                            base_obj = self._get_node_text(operand)
 
+                    if call_name == "unknown":
+                        continue
+                    full_name = f"{base_obj}.{call_name}" if base_obj else call_name
 
-                # Simplified traversal to find the "function name" and "receiver"
+                    ctx_name, ctx_type, ctx_line = self._get_parent_context(node)
 
-                #If it's a direct call: foo()
-                #If it's a method call: x.foo()
-
-                #Tree-sitter struct:
-                # (call_expression (simple_identifier) (call_suffix ...))
-                # (call_expression (navigation_expression (simple_identifier)(navigation_suffix (simple_identifier))) (call_suffix))
-                # -> name = 2nd simple_identifier, base = 1st simple_identifier
-
-                # Let's verify children
-                children = node.children
-                first_child = children[0]
-
-                if first_child.type == "simple_identifier":
-                    call_name = self._get_node_text(first_child)
-                    # No explicit base object
-                elif first_child.type == "navigation_expression":
-                    # x.foo
-                    # children: operand (x), operator (.), suffix (foo)
-                    # Usually 3 children?
-                    # Let's inspect nav expression children
-                    nav_children = first_child.children
-                    if len(nav_children) >= 2:
-                        # operand is 0
-                        operand = nav_children[0]
-                        # last one is suffix?
-                        suffix = nav_children[-1]
-
-                        # Suffix usually contains the method name in a navigation_suffix node or directly?
-                        # Suffix is (navigation_suffix (simple_identifier)) usually.
-                        
-                        if suffix.type == "navigation_suffix":
-                            for c in suffix.children:
-                                if c.type == "simple_identifier":
-                                    call_name = self._get_node_text(c)
-                                    break
-                        elif suffix.type == "simple_identifier":
-                            call_name = self._get_node_text(suffix)
-                        # Base object
-                        base_obj = self._get_node_text(operand)
-                if call_name == "unknown":
-                    continue
-                full_name = f"{base_obj}.{call_name}" if base_obj else call_name
-                
-                ctx_name, ctx_type, ctx_line = self._get_parent_context(node)
-
-                # Interence
-                inferred_type = None
-                if base_obj:
-                    # Lookup base_obj in variables
-                    # Try exact context
-                    inferred_type = var_map.get((base_obj, ctx_name))
-                    if not inferred_type:
-                        # Try class context if we are in a method
-                        # This logic is approximate.
-                        # If we are in method 'foo' of 'ClassA', and 'base_obj' refers to a property of 'ClassA',
-                        # var_map entry would have context 'ClassA'
-                        # But our 'variables' parsing puts context as 'ClassA' for props
-                        # But 'ctx_name' here is 'foo'
-                        # We need to know 'foo' is in 'ClassA'
-                        #'get_parent_context' returns immediate parent.
-                        pass
-                        # Fallback: check global/file scope (context=None)
+                    inferred_type = None
+                    if base_obj:
+                        inferred_type = var_map.get((base_obj, ctx_name))
                         if not inferred_type:
                             inferred_type = var_map.get((base_obj, None))
-                        # Fallback: check if any variable named base_obj exists
                         if not inferred_type:
                             for (vname, vctx), vtype in var_map.items():
                                 if vname == base_obj:
                                     inferred_type = vtype
                                     break
-                calls.append({
-                    "name": call_name,
-                    "full_name": full_name,
-                    "line_number": start_line,
-                    "args": [], # Simplified
-                    "inferred_obj_type": inferred_type,
-                    "context": [None, ctx_type, ctx_line], # Keeping format compatible
-                    "class_context": [None, None],
-                    "lang": self.language_name,
-                    "is_dependency": False
-                })
-            except Exception as e:
-                continue
-    return calls
+
+                    calls.append({
+                        "name": call_name,
+                        "full_name": full_name,
+                        "line_number": start_line,
+                        "args": [],
+                        "inferred_obj_type": inferred_type,
+                        "context": [None, ctx_type, ctx_line],
+                        "class_context": [None, None],
+                        "lang": self.language_name,
+                        "is_dependency": False,
+                    })
+                except Exception as e:
+                    continue
+        return calls
 
 def pre_scan_haskell(file: list[Path], parser_wrapper) -> dict:
     name_to_files = {}

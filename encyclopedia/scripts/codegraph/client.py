@@ -141,9 +141,8 @@ class CodeGraphClient:
             Result containing index statistics or error
         """
         try:
-            # Import the heavy dependencies only when needed
-            from codegraphcontext.tools.graph_builder import GraphBuilder
-            from codegraphcontext.core.jobs import JobManager
+            from .indexer.graph_builder import GraphBuilder
+            from .indexer.jobs import JobManager
 
             path = Path(path).resolve()
             if not path.exists():
@@ -160,13 +159,6 @@ class CodeGraphClient:
                 "indexed": True,
             })
 
-        except ImportError:
-            return Err(
-                CodeGraphError(
-                    "codegraphcontext package required for indexing",
-                    "Install with: pip install codegraphcontext",
-                )
-            )
         except Exception as e:
             return Err(CodeGraphError(f"Indexing failed: {e}"))
 
@@ -228,7 +220,7 @@ class CodeGraphClient:
                         CALL db.index.fulltext.queryNodes("code_search_index", $search_term)
                         YIELD node, score
                         WHERE node:Function
-                        RETURN node.name as name, node.file_path as file_path,
+                        RETURN node.name as name, node.path as file_path,
                                node.line_number as line_number, node.source as source,
                                node.docstring as docstring, node.args as args,
                                node.decorators as decorators, node.is_dependency as is_dependency,
@@ -244,7 +236,7 @@ class CodeGraphClient:
                         CALL db.index.fulltext.queryNodes("code_search_index", $name)
                         YIELD node, score
                         WHERE node:Function AND node.name CONTAINS $name
-                        RETURN node.name as name, node.file_path as file_path,
+                        RETURN node.name as name, node.path as file_path,
                                node.line_number as line_number, node.source as source,
                                node.docstring as docstring, node.args as args,
                                node.decorators as decorators, node.is_dependency as is_dependency,
@@ -272,7 +264,7 @@ class CodeGraphClient:
                         CALL db.index.fulltext.queryNodes("code_search_index", $search_term)
                         YIELD node, score
                         WHERE node:Class
-                        RETURN node.name as name, node.file_path as file_path,
+                        RETURN node.name as name, node.path as file_path,
                                node.line_number as line_number, node.source as source,
                                node.docstring as docstring, node.bases as bases,
                                node.is_dependency as is_dependency
@@ -287,7 +279,7 @@ class CodeGraphClient:
                         CALL db.index.fulltext.queryNodes("code_search_index", $name)
                         YIELD node, score
                         WHERE node:Class AND node.name CONTAINS $name
-                        RETURN node.name as name, node.file_path as file_path,
+                        RETURN node.name as name, node.path as file_path,
                                node.line_number as line_number, node.source as source,
                                node.docstring as docstring, node.bases as bases,
                                node.is_dependency as is_dependency
@@ -311,7 +303,7 @@ class CodeGraphClient:
                     """
                     MATCH (v:Variable)
                     WHERE v.name CONTAINS $name OR v.name =~ $regex
-                    RETURN v.name as name, v.file_path as file_path,
+                    RETURN v.name as name, v.path as file_path,
                            v.line_number as line_number, v.value as value,
                            v.context as context, v.is_dependency as is_dependency
                     ORDER BY v.is_dependency ASC, v.name
@@ -338,12 +330,12 @@ class CodeGraphClient:
                 if file_path:
                     result = session.run(
                         """
-                        MATCH (caller:Function)-[call:CALLS]->(target:Function {name: $name, file_path: $path})
-                        RETURN caller.name as caller_name, caller.file_path as caller_file_path,
+                        MATCH (caller:Function)-[call:CALLS]->(target:Function {name: $name, path: $path})
+                        RETURN caller.name as caller_name, caller.path as caller_file_path,
                                caller.line_number as caller_line_number,
-                               target.name as called_name, target.file_path as called_file_path,
+                               target.name as called_name, target.path as called_file_path,
                                call.line_number as call_line_number, call.args as args
-                        ORDER BY caller.is_dependency ASC, caller.file_path
+                        ORDER BY caller.is_dependency ASC, caller.path
                         LIMIT 20
                         """,
                         name=function_name,
@@ -353,11 +345,11 @@ class CodeGraphClient:
                     result = session.run(
                         """
                         MATCH (caller:Function)-[call:CALLS]->(target:Function {name: $name})
-                        RETURN caller.name as caller_name, caller.file_path as caller_file_path,
+                        RETURN caller.name as caller_name, caller.path as caller_file_path,
                                caller.line_number as caller_line_number,
-                               target.name as called_name, target.file_path as called_file_path,
+                               target.name as called_name, target.path as called_file_path,
                                call.line_number as call_line_number, call.args as args
-                        ORDER BY caller.is_dependency ASC, caller.file_path
+                        ORDER BY caller.is_dependency ASC, caller.path
                         LIMIT 20
                         """,
                         name=function_name,
@@ -388,10 +380,10 @@ class CodeGraphClient:
                 if file_path:
                     result = session.run(
                         """
-                        MATCH (caller:Function {name: $name, file_path: $path})-[call:CALLS]->(called:Function)
-                        RETURN caller.name as caller_name, caller.file_path as caller_file_path,
+                        MATCH (caller:Function {name: $name, path: $path})-[call:CALLS]->(called:Function)
+                        RETURN caller.name as caller_name, caller.path as caller_file_path,
                                caller.line_number as caller_line_number,
-                               called.name as called_name, called.file_path as called_file_path,
+                               called.name as called_name, called.path as called_file_path,
                                call.line_number as call_line_number, call.args as args
                         ORDER BY called.is_dependency ASC, called.name
                         LIMIT 20
@@ -403,9 +395,9 @@ class CodeGraphClient:
                     result = session.run(
                         """
                         MATCH (caller:Function {name: $name})-[call:CALLS]->(called:Function)
-                        RETURN caller.name as caller_name, caller.file_path as caller_file_path,
+                        RETURN caller.name as caller_name, caller.path as caller_file_path,
                                caller.line_number as caller_line_number,
-                               called.name as called_name, called.file_path as called_file_path,
+                               called.name as called_name, called.path as called_file_path,
                                call.line_number as call_line_number, call.args as args
                         ORDER BY called.is_dependency ASC, called.name
                         LIMIT 20
@@ -467,7 +459,7 @@ class CodeGraphClient:
             driver = self._db_manager.get_driver()
             with driver.session() as session:
                 match_clause = (
-                    "MATCH (child:Class {name: $name, file_path: $path})"
+                    "MATCH (child:Class {name: $name, path: $path})"
                     if file_path
                     else "MATCH (child:Class {name: $name})"
                 )
@@ -480,7 +472,7 @@ class CodeGraphClient:
                     f"""
                     {match_clause}
                     MATCH (child)-[:INHERITS]->(parent:Class)
-                    RETURN parent.name as name, parent.file_path as file_path,
+                    RETURN parent.name as name, parent.path as file_path,
                            parent.line_number as line_number, parent.docstring as docstring,
                            parent.is_dependency as is_dependency
                     """,
@@ -493,7 +485,7 @@ class CodeGraphClient:
                     f"""
                     {match_clause}
                     MATCH (grandchild:Class)-[:INHERITS]->(child)
-                    RETURN grandchild.name as name, grandchild.file_path as file_path,
+                    RETURN grandchild.name as name, grandchild.path as file_path,
                            grandchild.line_number as line_number, grandchild.docstring as docstring,
                            grandchild.is_dependency as is_dependency
                     """,
@@ -506,7 +498,7 @@ class CodeGraphClient:
                     f"""
                     {match_clause}
                     MATCH (child)-[:CONTAINS]->(method:Function)
-                    RETURN method.name as name, method.file_path as file_path,
+                    RETURN method.name as name, method.path as file_path,
                            method.line_number as line_number, method.args as args,
                            method.docstring as docstring, method.is_dependency as is_dependency
                     """,
@@ -545,10 +537,10 @@ class CodeGraphClient:
                     WHERE caller.is_dependency = false
                     WITH func, count(caller) as caller_count
                     WHERE caller_count = 0
-                    RETURN func.name as name, func.file_path as file_path,
+                    RETURN func.name as name, func.path as file_path,
                            func.line_number as line_number, func.docstring as docstring,
                            func.is_dependency as is_dependency
-                    ORDER BY func.file_path, func.line_number
+                    ORDER BY func.path, func.line_number
                     LIMIT 50
                     """,
                     exclude=exclude,
@@ -568,7 +560,7 @@ class CodeGraphClient:
                     """
                     MATCH (f:Function)
                     WHERE f.cyclomatic_complexity IS NOT NULL AND f.is_dependency = false
-                    RETURN f.name as name, f.file_path as file_path,
+                    RETURN f.name as name, f.path as file_path,
                            f.cyclomatic_complexity as complexity, f.line_number as line_number
                     ORDER BY f.cyclomatic_complexity DESC
                     LIMIT $limit

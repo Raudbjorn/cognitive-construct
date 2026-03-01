@@ -230,7 +230,7 @@ class Context7Client:
         Returns:
             Result containing SearchLibraryResponse on success
         """
-        result = await self._request("POST", "v1/search", body={"query": query})
+        result = await self._request("GET", "v1/search", query={"query": query})
         if result.is_err():
             return result
 

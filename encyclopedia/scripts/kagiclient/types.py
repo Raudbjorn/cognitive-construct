@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Literal
 
 
 class SummaryType(str, Enum):
@@ -50,6 +49,44 @@ class SummaryResponse:
     summary: str
     summary_type: SummaryType
     engine: SummarizerEngine
+
+
+@dataclass(frozen=True, slots=True)
+class FastGPTReference:
+    """A reference cited by FastGPT."""
+
+    title: str
+    snippet: str
+    url: str
+
+
+@dataclass(frozen=True, slots=True)
+class FastGPTResponse:
+    """FastGPT API response."""
+
+    query: str
+    output: str
+    references: list[FastGPTReference]
+    tokens: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class EnrichResult:
+    """Individual enrich/news result."""
+
+    title: str
+    url: str
+    snippet: str
+    published: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class EnrichResponse:
+    """Enrich API response."""
+
+    query: str
+    results: list[EnrichResult]
+    result_count: int
 
 
 @dataclass(frozen=True, slots=True)

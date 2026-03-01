@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from context7client import Context7Client
 from exaclient import ExaClient, WebSearchOptions, CodeSearchOptions
+from kagiclient import KagiClient
 from perplexity import PerplexityClient
 
 # ---------------------------------------------------------------------------
@@ -103,6 +104,103 @@ class ErrorCode(Enum):
 
 REPO_HINT_PATTERN = re.compile(r'repo:([a-zA-Z0-9_.\-]+/[a-zA-Z0-9_.\-]+)')
 TRUTHY = {"1", "true", "yes", "on"}
+
+# ---------------------------------------------------------------------------
+# Codegraph query expansion — bridge vocabulary gaps for Lucene fulltext
+# ---------------------------------------------------------------------------
+
+# Regex to split camelCase / PascalCase boundaries: "getUserData" → ["get", "User", "Data"]
+_CAMEL_SPLIT = re.compile(r'(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])')
+
+_CODE_SYNONYMS: dict[str, list[str]] = {
+    "auth": ["authentication", "login", "signin", "credentials", "authorize"],
+    "get": ["fetch", "retrieve", "load", "read", "query"],
+    "set": ["update", "write", "store", "save", "put"],
+    "delete": ["remove", "destroy", "drop", "purge", "erase"],
+    "create": ["new", "make", "build", "init", "generate", "add"],
+    "error": ["exception", "fault", "failure", "err"],
+    "config": ["configuration", "settings", "options", "preferences"],
+    "validate": ["verify", "check", "assert", "ensure"],
+    "search": ["find", "lookup", "locate", "discover", "match"],
+    "send": ["emit", "dispatch", "publish", "notify", "push"],
+    "parse": ["decode", "deserialize", "extract", "transform"],
+    "connect": ["open", "establish", "attach", "link"],
+    "cache": ["memoize", "buffer"],
+    "database": ["db", "repository", "persistence"],
+    "api": ["endpoint", "interface", "service", "rest"],
+    "route": ["path", "url", "handler"],
+    "async": ["concurrent", "parallel", "await", "promise", "future"],
+    "callback": ["handler", "listener", "hook", "delegate"],
+    "component": ["widget", "element", "module", "block"],
+    "render": ["display", "draw", "paint", "show"],
+    "middleware": ["interceptor", "filter"],
+    "test": ["spec", "expect"],
+    "log": ["trace", "debug", "record", "audit"],
+    "http": ["request", "response", "client"],
+    "user": ["account", "profile", "member"],
+    "serialize": ["encode", "marshal", "format", "dump"],
+}
+
+# Reverse index: any synonym → its family key + siblings
+_REVERSE_SYNONYMS: dict[str, set[str]] = {}
+for _key, _syns in _CODE_SYNONYMS.items():
+    _family = {_key, *_syns}
+    for _term in _family:
+        _REVERSE_SYNONYMS.setdefault(_term, set()).update(_family)
+
+
+def _tokenize_identifier(ident: str) -> list[str]:
+    """Split a code identifier into lowercase component words.
+
+    Handles camelCase, PascalCase, snake_case, kebab-case, and dot.case.
+
+    Args:
+        ident: A code identifier string.
+
+    Returns:
+        List of lowercase word tokens.
+    """
+    # Split on non-alphanumeric separators (underscore, hyphen, dot, etc.)
+    parts = re.split(r'[^a-zA-Z0-9]+', ident)
+    tokens: list[str] = []
+    for part in parts:
+        if not part:
+            continue
+        # Split camelCase / PascalCase
+        sub_parts = _CAMEL_SPLIT.split(part)
+        tokens.extend(sp.lower() for sp in sub_parts if sp)
+    return tokens
+
+
+def expand_codegraph_query(query: str) -> str:
+    """Expand a search query with code-aware synonyms for Lucene fulltext.
+
+    Pipeline:
+    1. Tokenize each word (split camelCase/snake_case identifiers)
+    2. Look up each token in the synonym map
+    3. Deduplicate and format as Lucene OR expression
+
+    Args:
+        query: Raw user search query.
+
+    Returns:
+        Lucene-compatible query string with OR-joined expanded terms.
+    """
+    raw_tokens: list[str] = []
+    for word in query.split():
+        raw_tokens.extend(_tokenize_identifier(word))
+
+    expanded: set[str] = set()
+    for token in raw_tokens:
+        expanded.add(token)
+        family = _REVERSE_SYNONYMS.get(token)
+        if family:
+            expanded.update(family)
+
+    if not expanded:
+        return query
+
+    return " OR ".join(sorted(expanded))
 
 
 # ---------------------------------------------------------------------------
@@ -642,6 +740,318 @@ async def query_perplexity(query: str, creds: Credentials) -> list[SearchResult]
     return results
 
 
+async def query_kagi(query: str, creds: Credentials) -> list[SearchResult]:
+    """Query Kagi using FastGPT (AI answer) with search fallback."""
+    results: list[SearchResult] = []
+
+    if not creds.kagi_key:
+        return results
+
+    cached = get_cached(query, "kagi")
+    if cached:
+        return [SearchResult(**r) for r in cached]
+
+    client = KagiClient(api_key=creds.kagi_key)
+
+    # Try FastGPT first — available without Search API beta
+    fastgpt_result = await client.fastgpt(query)
+    if fastgpt_result.is_ok() and fastgpt_result.value.output:
+        results.append(SearchResult(
+            title=f"Kagi: {query[:50]}",
+            content=fastgpt_result.value.output,
+            source="kagi",
+            relevance=0.85,
+        ))
+        for ref in fastgpt_result.value.references[:3]:
+            if ref.url:
+                results.append(SearchResult(
+                    title=ref.title,
+                    content=ref.snippet,
+                    url=ref.url,
+                    source="kagi",
+                    relevance=0.7,
+                ))
+    else:
+        # Fallback to search API (requires beta access)
+        search_result = await client.search(query, limit=5)
+        if search_result.is_ok():
+            for item in search_result.value.results[:5]:
+                results.append(SearchResult(
+                    title=item.title,
+                    content=item.snippet,
+                    url=item.url,
+                    source="kagi",
+                    relevance=0.75,
+                ))
+
+    if results:
+        set_cache(query, "kagi", [r.to_dict() for r in results])
+    return results
+
+
+def _build_codegraph_result(rec: dict) -> SearchResult:
+    """Build a SearchResult from a Neo4j record dict."""
+    node_type = rec.get("type") or "Code"
+    name = rec.get("name") or ""
+    path = rec.get("path") or ""
+    line = rec.get("line") or 0
+    source = rec.get("source") or ""
+    docstring = rec.get("docstring") or ""
+
+    content_parts: list[str] = []
+    if docstring:
+        content_parts.append(docstring.strip())
+    if source:
+        src_lines = source.split("\n")
+        preview = "\n".join(src_lines[:30])
+        if len(src_lines) > 30:
+            preview += f"\n... ({len(src_lines) - 30} more lines)"
+        content_parts.append(f"```\n{preview}\n```")
+
+    content = "\n\n".join(content_parts) if content_parts else f"{node_type} {name}"
+
+    metadata: dict[str, Any] = {"type": node_type, "path": path, "line": line}
+    if "fulltext_score" in rec:
+        metadata["fulltext_score"] = rec["fulltext_score"]
+    if "vector_score" in rec:
+        metadata["vector_score"] = rec["vector_score"]
+
+    return SearchResult(
+        title=f"[{node_type}] {name} ({path}:{line})",
+        content=content,
+        source="codegraph",
+        relevance=rec.get("combined_score", rec.get("fulltext_score", 0.0)),
+        metadata=metadata,
+    )
+
+
+def _fulltext_search(driver: Any, search_term: str, limit: int = 20) -> list[dict]:
+    """Run fulltext Lucene search against code_search_index."""
+    hits: list[dict] = []
+    try:
+        with driver.session() as session:
+            records = session.run(
+                """
+                CALL db.index.fulltext.queryNodes("code_search_index", $search_term)
+                YIELD node, score
+                RETURN labels(node)[0] as type, node.name as name,
+                       node.path as path, node.line_number as line,
+                       node.source as source, node.docstring as docstring,
+                       score
+                ORDER BY score DESC
+                LIMIT $limit
+                """,
+                search_term=search_term,
+                limit=limit,
+            )
+            for rec in records:
+                hits.append({
+                    "type": rec["type"],
+                    "name": rec["name"],
+                    "path": rec["path"],
+                    "line": rec["line"],
+                    "source": rec["source"],
+                    "docstring": rec["docstring"],
+                    "fulltext_score": rec["score"] or 0.0,
+                })
+    except Exception:
+        pass
+    return hits
+
+
+def _vector_search(driver: Any, query: str, limit: int = 20) -> list[dict]:
+    """Run vector similarity search against code_vector_index."""
+    try:
+        from codegraph.embeddings import encode_query
+
+        query_vec = encode_query(query)
+        if query_vec is None:
+            return []
+
+        hits: list[dict] = []
+        with driver.session() as session:
+            records = session.run(
+                """
+                CALL db.index.vector.queryNodes("code_vector_index", $limit, $query_vec)
+                YIELD node, score
+                RETURN labels(node)[0] as type, node.name as name,
+                       node.path as path, node.line_number as line,
+                       node.source as source, node.docstring as docstring,
+                       score
+                """,
+                limit=limit,
+                query_vec=query_vec.tolist(),
+            )
+            for rec in records:
+                hits.append({
+                    "type": rec["type"],
+                    "name": rec["name"],
+                    "path": rec["path"],
+                    "line": rec["line"],
+                    "source": rec["source"],
+                    "docstring": rec["docstring"],
+                    "vector_score": rec["score"] or 0.0,
+                })
+        return hits
+    except (ImportError, Exception):
+        return []
+
+
+def _merge_candidates(
+    fulltext_hits: list[dict],
+    vector_hits: list[dict],
+) -> list[SearchResult]:
+    """Dedup and merge fulltext + vector hits with weighted scoring.
+
+    Dedup key: ``(name, path, line)``.
+    Weight: ``0.4 * norm_fulltext + 0.6 * norm_vector``.
+    """
+    # Index by identity key
+    merged: dict[tuple, dict] = {}
+
+    # Normalize fulltext scores to [0, 1]
+    max_ft = max((h["fulltext_score"] for h in fulltext_hits), default=1.0) or 1.0
+    for h in fulltext_hits:
+        key = (h["name"], h["path"], h["line"])
+        entry = merged.setdefault(key, {**h, "fulltext_score": 0.0, "vector_score": 0.0})
+        entry["fulltext_score"] = h["fulltext_score"] / max_ft
+
+    for h in vector_hits:
+        key = (h["name"], h["path"], h["line"])
+        if key in merged:
+            merged[key]["vector_score"] = h["vector_score"]
+        else:
+            merged[key] = {**h, "fulltext_score": 0.0, "vector_score": h["vector_score"]}
+
+    # Compute combined score
+    for entry in merged.values():
+        entry["combined_score"] = (
+            0.4 * entry["fulltext_score"] + 0.6 * entry["vector_score"]
+        )
+
+    ranked = sorted(merged.values(), key=lambda e: e["combined_score"], reverse=True)
+    return [_build_codegraph_result(e) for e in ranked]
+
+
+def _rerank_candidates(
+    query: str,
+    candidates: list[SearchResult],
+    top_k: int = 10,
+) -> list[SearchResult]:
+    """Re-score candidates with the cross-encoder model."""
+    if not candidates:
+        return []
+
+    try:
+        from codegraph.embeddings import rerank
+
+        docs = [
+            {"title": c.title, "content": c.content[:500], "text": f"{c.title} {c.content[:500]}"}
+            for c in candidates
+        ]
+        scored = rerank(query, docs, text_key="text", top_k=top_k)
+
+        reranked: list[SearchResult] = []
+        for doc, score in scored:
+            # Find the original candidate by title match
+            for c in candidates:
+                if c.title == doc["title"]:
+                    reranked.append(SearchResult(
+                        title=c.title,
+                        content=c.content,
+                        url=c.url,
+                        source=c.source,
+                        relevance=float(score),
+                        metadata={**c.metadata, "rerank_score": float(score)},
+                    ))
+                    break
+        return reranked
+
+    except (ImportError, Exception):
+        return candidates[:top_k]
+
+
+async def query_codegraph(
+    query: str,
+    creds: Credentials,
+    *,
+    expand: bool = True,
+    use_vectors: bool = True,
+    use_reranking: bool = True,
+) -> list[SearchResult]:
+    """Query CodeGraphContext via hybrid fulltext + vector search.
+
+    Pipeline:
+    1. Fulltext search with optional synonym expansion
+    2. Vector similarity search (if ``use_vectors``)
+    3. Merge and deduplicate candidates with weighted scoring
+    4. Cross-encoder reranking (if ``use_reranking``)
+
+    Args:
+        query: Raw search query.
+        creds: Credentials with Neo4j connection info.
+        expand: Expand query with code-aware synonyms before fulltext search.
+        use_vectors: Enable vector similarity search.
+        use_reranking: Enable cross-encoder reranking.
+    """
+    results: list[SearchResult] = []
+
+    if not (creds.neo4j_uri and creds.neo4j_password):
+        return results
+
+    cached = get_cached(query, "codegraph")
+    if cached:
+        return [SearchResult(**r) for r in cached]
+
+    search_term = expand_codegraph_query(query) if expand else query
+
+    try:
+        from neo4j import GraphDatabase
+
+        loop = asyncio.get_event_loop()
+
+        def _run_hybrid() -> list[SearchResult]:
+            driver = GraphDatabase.driver(
+                creds.neo4j_uri,
+                auth=(creds.neo4j_user or "neo4j", creds.neo4j_password),
+            )
+            try:
+                # 1. Fulltext search with expanded query
+                ft_hits = _fulltext_search(driver, search_term, limit=20)
+
+                # 2. Vector search with original query (not expanded)
+                vec_hits = _vector_search(driver, query, limit=20) if use_vectors else []
+
+                # 3. Merge and deduplicate
+                if vec_hits:
+                    merged = _merge_candidates(ft_hits, vec_hits)
+                else:
+                    # Fulltext-only: normalize scores and build results
+                    max_ft = max((h["fulltext_score"] for h in ft_hits), default=1.0) or 1.0
+                    for h in ft_hits:
+                        h["combined_score"] = h["fulltext_score"] / max_ft
+                    merged = [_build_codegraph_result(h) for h in ft_hits]
+
+                # 4. Cross-encoder reranking
+                if use_reranking and len(merged) > 1:
+                    return _rerank_candidates(query, merged, top_k=10)
+
+                return merged[:10]
+            finally:
+                driver.close()
+
+        results = await loop.run_in_executor(None, _run_hybrid)
+
+    except ImportError:
+        pass  # neo4j not installed — degrade gracefully
+    except Exception:
+        pass  # Connection or query error — degrade gracefully
+
+    if results:
+        set_cache(query, "codegraph", [r.to_dict() for r in results])
+    return results
+
+
 async def query_git_ingest(repo_path: str, query: str) -> list[SearchResult]:
     """Query mcp-git-ingest for repository analysis.
 
@@ -688,7 +1098,15 @@ async def query_git_ingest(repo_path: str, query: str) -> list[SearchResult]:
 # Main Query Orchestration
 # ---------------------------------------------------------------------------
 
-async def execute_search(query: str, sources: list[str] | None = None, limit: int = 5) -> dict:
+async def execute_search(
+    query: str,
+    sources: list[str] | None = None,
+    limit: int = 5,
+    *,
+    expand: bool = True,
+    use_vectors: bool = True,
+    use_reranking: bool = True,
+) -> dict:
     """Execute search across multiple sources with parallel queries."""
     creds = Credentials.load()
     feature_flags = FeatureFlags()
@@ -736,17 +1154,16 @@ async def execute_search(query: str, sources: list[str] | None = None, limit: in
             degradation.add_missing(source, reason or "unavailable", is_optional_source(source))
 
     # Special handling for repo-dependent sources
+    # mcp_git_ingest needs a repo hint; codegraph searches all indexed repos
     if repo_hint is None:
-        target_sources = [
-            s for s in target_sources if s not in {"mcp_git_ingest", "codegraph"}
-        ]
-        for src in ("mcp_git_ingest", "codegraph"):
-            if src in routed_sources:
-                degradation.add_missing(
-                    src,
-                    "repository hint missing (use repo:owner/name)",
-                    is_optional_source(src),
-                )
+        if "mcp_git_ingest" in target_sources:
+            target_sources.remove("mcp_git_ingest")
+        if "mcp_git_ingest" in routed_sources:
+            degradation.add_missing(
+                "mcp_git_ingest",
+                "repository hint missing (use repo:owner/name)",
+                is_optional_source("mcp_git_ingest"),
+            )
     else:
         if "mcp_git_ingest" not in target_sources and "mcp_git_ingest" in routed_sources:
             target_sources.append("mcp_git_ingest")
@@ -772,6 +1189,13 @@ async def execute_search(query: str, sources: list[str] | None = None, limit: in
                 coro = query_exa(effective_query, creds)
         elif source == "perplexity":
             coro = query_perplexity(effective_query, creds)
+        elif source == "kagi":
+            coro = query_kagi(effective_query, creds)
+        elif source == "codegraph":
+            coro = query_codegraph(
+                effective_query, creds,
+                expand=expand, use_vectors=use_vectors, use_reranking=use_reranking,
+            )
         elif source == "mcp_git_ingest" and repo_hint:
             coro = query_git_ingest(repo_hint, effective_query)
         else:
@@ -909,7 +1333,15 @@ async def execute_code(repo_path: str, query: str, depth: str = "shallow") -> di
 # CLI Command Handlers
 # ---------------------------------------------------------------------------
 
-def handle_search(query: str, sources: str | None, limit: int) -> None:
+def handle_search(
+    query: str,
+    sources: str | None,
+    limit: int,
+    *,
+    expand: bool = True,
+    use_vectors: bool = True,
+    use_reranking: bool = True,
+) -> None:
     """Handle the search command."""
     sanitized = sanitize_input(query)
     if not sanitized:
@@ -917,7 +1349,10 @@ def handle_search(query: str, sources: str | None, limit: int) -> None:
 
     source_list = sources.split(",") if sources else None
     source_list = [s.strip().lower() for s in source_list] if source_list else None
-    result = asyncio.run(execute_search(sanitized, source_list, limit))
+    result = asyncio.run(execute_search(
+        sanitized, source_list, limit,
+        expand=expand, use_vectors=use_vectors, use_reranking=use_reranking,
+    ))
     output_json(result, result.get("code", 0))
 
 
@@ -943,6 +1378,85 @@ def handle_code(repo_path: str, query: str, depth: str) -> None:
     output_json(result, result.get("code", 0))
 
 
+def _get_codegraph_client():
+    """Create and connect a CodeGraphClient from env credentials."""
+    from codegraph import CodeGraphClient
+
+    creds = Credentials.load()
+    if not (creds.neo4j_uri and creds.neo4j_password):
+        output_error(ErrorCode.CONFIG_ERROR, "NEO4J_URI and NEO4J_PASSWORD must be set")
+
+    client = CodeGraphClient(
+        neo4j_uri=creds.neo4j_uri,
+        neo4j_username=creds.neo4j_user or "neo4j",
+        neo4j_password=creds.neo4j_password,
+    )
+    result = client.connect()
+    if result.is_err():
+        output_error(ErrorCode.BACKEND_UNAVAILABLE, f"Neo4j connection failed: {result.error.message}")
+    return client
+
+
+def handle_index(path_str: str, dependency: bool, force: bool, *, no_embed: bool = False) -> None:
+    """Handle the index command."""
+    repo_path = Path(path_str).resolve()
+    if not repo_path.exists():
+        output_error(ErrorCode.CONFIG_ERROR, f"Path does not exist: {repo_path}")
+
+    if no_embed:
+        os.environ["CODEGRAPH_SKIP_EMBEDDINGS"] = "1"
+
+    client = _get_codegraph_client()
+    try:
+        if force:
+            client.delete_repository(str(repo_path))
+
+        result = asyncio.run(client.index_repository(str(repo_path), as_dependency=dependency))
+        if result.is_ok():
+            output_json({"status": "success", **result.value})
+        else:
+            output_json(
+                {"status": "error", "code": ErrorCode.INTERNAL_ERROR.value, "message": result.error.message},
+                ErrorCode.INTERNAL_ERROR.value,
+            )
+    finally:
+        client.close()
+
+
+def handle_index_list() -> None:
+    """Handle the index-list command."""
+    client = _get_codegraph_client()
+    try:
+        result = client.list_repositories()
+        if result.is_ok():
+            repos = [{"name": r.name, "path": r.path, "is_dependency": r.is_dependency} for r in result.value]
+            output_json({"status": "success", "repositories": repos})
+        else:
+            output_json(
+                {"status": "error", "code": ErrorCode.INTERNAL_ERROR.value, "message": result.error.message},
+                ErrorCode.INTERNAL_ERROR.value,
+            )
+    finally:
+        client.close()
+
+
+def handle_index_delete(path_str: str) -> None:
+    """Handle the index-delete command."""
+    repo_path = Path(path_str).resolve()
+    client = _get_codegraph_client()
+    try:
+        result = client.delete_repository(str(repo_path))
+        if result.is_ok():
+            output_json({"status": "success", "path": str(repo_path), "deleted": True})
+        else:
+            output_json(
+                {"status": "error", "code": ErrorCode.INTERNAL_ERROR.value, "message": result.error.message},
+                ErrorCode.INTERNAL_ERROR.value,
+            )
+    finally:
+        client.close()
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -957,6 +1471,9 @@ Examples:
   encyclopedia.py search "React useState best practices"
   encyclopedia.py lookup "fastapi" --version latest
   encyclopedia.py code "github.com/owner/repo" "how does auth work"
+  encyclopedia.py index /path/to/repo
+  encyclopedia.py index-list
+  encyclopedia.py index-delete /path/to/repo
         """
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -969,6 +1486,24 @@ Examples:
         help="Comma-separated list of sources (context7,exa,perplexity,kagi,searxng,codegraph,mcp_git_ingest)"
     )
     search_parser.add_argument("--limit", type=int, default=5, help="Maximum results (default: 5)")
+    search_parser.add_argument(
+        "--no-expand",
+        action="store_true",
+        default=False,
+        help="Disable codegraph query expansion (synonym/identifier splitting)",
+    )
+    search_parser.add_argument(
+        "--no-vectors",
+        action="store_true",
+        default=False,
+        help="Disable vector similarity search for codegraph",
+    )
+    search_parser.add_argument(
+        "--no-rerank",
+        action="store_true",
+        default=False,
+        help="Disable cross-encoder reranking for codegraph",
+    )
 
     # LOOKUP command
     lookup_parser = subparsers.add_parser("lookup", help="Look up documentation for a topic")
@@ -981,6 +1516,20 @@ Examples:
     code_parser.add_argument("query", help="Question about the repository")
     code_parser.add_argument("--depth", choices=["shallow", "deep"], default="shallow",
                             help="Analysis depth (default: shallow)")
+
+    # INDEX command
+    index_parser = subparsers.add_parser("index", help="Index a local repository into the code graph")
+    index_parser.add_argument("path", help="Path to repository or directory")
+    index_parser.add_argument("--dependency", action="store_true", help="Mark as dependency code")
+    index_parser.add_argument("--force", action="store_true", help="Re-index (deletes existing data first)")
+    index_parser.add_argument("--no-embed", action="store_true", default=False, help="Skip embedding computation during indexing")
+
+    # INDEX-LIST command
+    subparsers.add_parser("index-list", help="List indexed repositories")
+
+    # INDEX-DELETE command
+    index_del_parser = subparsers.add_parser("index-delete", help="Remove an indexed repository")
+    index_del_parser.add_argument("path", help="Path of repository to remove")
 
     args = parser.parse_args()
 
@@ -996,11 +1545,22 @@ Examples:
 
     # Route to command handler
     if args.command == "search":
-        handle_search(args.query, args.sources, args.limit)
+        handle_search(
+            args.query, args.sources, args.limit,
+            expand=not args.no_expand,
+            use_vectors=not args.no_vectors,
+            use_reranking=not args.no_rerank,
+        )
     elif args.command == "lookup":
         handle_lookup(args.topic, args.version)
     elif args.command == "code":
         handle_code(args.repo_path, args.query, args.depth)
+    elif args.command == "index":
+        handle_index(args.path, args.dependency, args.force, no_embed=args.no_embed)
+    elif args.command == "index-list":
+        handle_index_list()
+    elif args.command == "index-delete":
+        handle_index_delete(args.path)
 
 
 if __name__ == "__main__":

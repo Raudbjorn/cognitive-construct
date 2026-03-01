@@ -10,9 +10,15 @@ from typing import Any, Literal
 class Model(str, Enum):
     """Available Perplexity models."""
 
-    SONAR_SMALL = "llama-3.1-sonar-small-128k-online"
-    SONAR_LARGE = "llama-3.1-sonar-large-128k-online"
-    SONAR_HUGE = "llama-3.1-sonar-huge-128k-online"
+    SONAR = "sonar"
+    SONAR_PRO = "sonar-pro"
+    SONAR_REASONING = "sonar-reasoning"
+    SONAR_REASONING_PRO = "sonar-reasoning-pro"
+
+    # Deprecated aliases (kept for backwards compatibility)
+    SONAR_SMALL = "sonar"
+    SONAR_LARGE = "sonar-pro"
+    SONAR_HUGE = "sonar-pro"
 
 
 DEFAULT_MODEL = Model.SONAR_SMALL

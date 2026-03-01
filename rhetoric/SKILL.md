@@ -1,191 +1,78 @@
 ---
 name: rhetoric
-description: Structured reasoning and deliberation. Record thoughts, deliberate on decisions, review thinking patterns.
+description: Toulmin argumentation engine — symbolic validation of argument structure, inferential integrity, and audience-calibrated delivery.
 license: MIT
 metadata:
-  version: 2.0.0
-  dependencies: python>=3.10, httpx, pydantic
+  version: 5.0.0
+  dependencies: python>=3.12, httpx, pydantic
 ---
 
-# Rhetoric: The Reasoning Engine
+# Rhetoric: Toulmin Argumentation Engine
 
-> "The unexamined thought is not worth having."
+> "Give me a place to stand, and I will move the world." — Archimedes
 
 ## Overview
 
-**Rhetoric** provides structured reasoning capabilities for complex problem-solving. It records thoughts with full revision tracking, orchestrates multi-model deliberation for decisions, and reviews thinking patterns to detect cognitive biases.
+**Rhetoric** is a symbolic argumentation engine based on Stephen Toulmin's model. It decomposes natural-language arguments into formal graphs (claim, data, warrant, backing, qualifier, rebuttal), validates inferential steps through four deterministic passes, selects delivery strategy based on audience epistemic state, and optionally generates structural analogies via Mercury.
 
 ## Commands
 
-### `think "<thought>" [--session-id <id>]`
-Record a thought with structured metadata. Supports revision tracking and branching.
+### `plan "<intent>" [--no-bridge] [--contradict <evidence>...]`
+Decompose a natural-language argument into a Toulmin graph, validate it through four passes, select a delivery strategy, and optionally generate a structural analogy via Mercury.
 
 ```bash
-python3 scripts/rhetoric.py think "We should use a factory pattern here" --session-id project-123
+python3 rhetoric/scripts/rhetoric.py plan "PostgreSQL 16 improves performance for most workloads"
+python3 rhetoric/scripts/rhetoric.py plan "Rust is best for all backends" --contradict "Compile times are slow" "Python has larger ecosystem"
+python3 rhetoric/scripts/rhetoric.py plan "Microservices improve reliability" --no-bridge
 ```
 
-**Output:**
-```json
-{
-  "status": "success",
-  "thought_id": "th-abc123",
-  "session_id": "project-123",
-  "thought_number": 3,
-  "total_thoughts": 5
-}
-```
+**Requires:** `INCEPTION_API_KEY` environment variable (Mercury API)
 
 **Options:**
-- `--session-id <id>`: Group thoughts into sessions
-- `--revision-of <id>`: Mark as revision of previous thought
-- `--branch-from <id>`: Create a branching thought path
+- `--no-bridge`: Skip analogy bridge generation
+- `--contradict <evidence>...`: Known contradicting evidence for cross-reference validation
 
-### `deliberate "<question>" [--rounds <n>]`
-Deliberate on a question through internal multi-perspective analysis.
-
-```bash
-python3 scripts/rhetoric.py deliberate "Should we use microservices or monolith?" --rounds 3
-```
-
-**Output:**
-```json
-{
-  "status": "completed",
-  "question": "Should we use microservices or monolith?",
-  "rounds_completed": 3,
-  "consensus": "Monolith recommended for MVP, with clear module boundaries for future extraction",
-  "confidence": 0.85
-}
-```
-
-**Options:**
-- `--rounds <n>`: Number of deliberation rounds (1-5, default: 2)
-- `--context <text>`: Additional context for deliberation
-- `--debug`: Show internal deliberation details (hidden by default)
-
-**Note:** Requires at least 2 configured model credentials. Returns clear error if insufficient.
-
-### `review [--session-id <id>]`
-Review thought history and detect patterns.
+### `validate <file>`
+Validate a pre-built Toulmin argument graph from a JSON file. No API needed.
 
 ```bash
-python3 scripts/rhetoric.py review --session-id project-123
+python3 rhetoric/scripts/rhetoric.py validate path/to/graph.json
 ```
 
-**Output:**
-```json
-{
-  "status": "success",
-  "session_id": "project-123",
-  "thought_count": 15,
-  "patterns": {
-    "revision_rate": 0.2,
-    "branch_count": 2,
-    "detected_issues": ["analysis_paralysis"]
-  },
-  "recommendations": ["Consider narrowing scope", "Make a decision to proceed"]
-}
-```
-
-### `status`
-Get current reasoning session status.
+### `demo`
+Run built-in demonstration cases showcasing the validation engine. No API needed.
 
 ```bash
-python3 scripts/rhetoric.py status
+python3 rhetoric/scripts/rhetoric.py demo
 ```
 
-**Output:**
-```json
-{
-  "active_sessions": 2,
-  "total_thoughts": 45,
-  "models_available": 3,
-  "deliberation_ready": true,
-  "last_activity": "2024-01-15T10:30:00Z"
-}
-```
+Demonstrates detection of: valid induction, hasty generalization, formal fallacies (affirming the consequent), cherry-picking (cross-reference integrity), and surface analogies.
 
-## Thought Persistence
+## Validation Passes
 
-Thoughts are persisted with the following schema:
+The engine runs four deterministic validation passes (no LLM calls):
 
-```json
-{
-  "id": "th-abc123",
-  "timestamp": "2024-01-15T10:30:00Z",
-  "session_id": "project-123",
-  "content": "The thought content",
-  "type": "analysis",
-  "revision_of": null
-}
-```
+| Pass | Name | Detects |
+|------|------|---------|
+| 1 | Structural completeness | Missing claim/data/warrant, absent backing/qualifier/rebuttals |
+| 2 | Inferential type validation | Formal fallacies, hasty generalization, false cause, surface analogy |
+| 3 | Cross-reference integrity | Unaddressed contradictions, unused supporting evidence |
+| 4 | Qualifier calibration | Overclaim/underclaim relative to evidence strength |
 
-Thoughts are stored in `thoughts.json` and retained indefinitely unless explicitly deleted.
-
-## Deliberation
-
-The `deliberate` command orchestrates multi-model debate internally:
-
-1. **Minimum 2 models** required (validates credentials at startup)
-2. **Maximum 5 rounds** of deliberation
-3. **Convergence detection** when confidence exceeds 0.8
-4. **Model names hidden** from output (opaque interface)
-
-### Required Credentials
-
-At least 2 of the following in `.env.local`:
+## Required Credentials
 
 ```bash
-OPENAI_API_KEY=sk-...
-ANTHROPIC_API_KEY=sk-ant-...
-OPENROUTER_API_KEY=sk-or-...
-GOOGLE_CLOUD_API_KEY=AIza...
+INCEPTION_API_KEY=...   # Mercury API — only needed for 'plan' command
 ```
 
-### Error Handling
+The `validate` and `demo` commands require no API keys.
 
-```json
-{"status": "error", "code": 4, "message": "Insufficient models for deliberation. Configure at least 2 of: OPENAI_API_KEY, ANTHROPIC_API_KEY, OPENROUTER_API_KEY"}
-```
+## Constitution
 
-## Configuration
-
-### Environment Variables
-
-Set in `.env.local`:
-
-```bash
-# Primary (at least 2 required for deliberation)
-OPENAI_API_KEY=sk-...
-ANTHROPIC_API_KEY=sk-ant-...
-OPENROUTER_API_KEY=sk-or-...
-GOOGLE_CLOUD_API_KEY=AIza...
-
-# Optional
-TAVILY_API_KEY=tvly-...  # Enhanced search in think
-```
-
-## Files
-
-- `thoughts.json`: Thought history with full schema
-- `deliberations/`: Deliberation transcripts (session-specific)
-- `constitution.md`: Reasoning rules and guidelines
-- `sessions/`: Session state files
-
-## Backends
-
-Rhetoric orchestrates these MCP servers internally (opaque to user):
-
-- **sequential-thinking**: Structured thought recording
-- **ai-counsel**: Multi-model deliberation
-- **vibe-check**: Pattern detection and risk assessment
-
-Backend details are hidden - you interact only through Rhetoric's unified interface.
+See [constitution.md](constitution.md) for 6 inviolable rules governing the argumentation engine.
 
 ## Synergies
 
-Rhetoric optionally integrates with other Cognitive Construct skills:
-
-- **→ Encyclopedia**: Fetch context during deliberation
-- **→ Inland Empire**: Store significant decisions as memories
-- **← Volition**: Complex actions can request deliberation first
+- **-> Encyclopedia**: Provide contradicting/supporting evidence for validation Pass 3
+- **-> Inland Empire**: Store significant argument analyses as memories
+- **<- Volition**: Complex actions can request argument validation first

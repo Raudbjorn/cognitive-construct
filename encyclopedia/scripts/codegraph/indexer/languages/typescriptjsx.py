@@ -1,4 +1,8 @@
 from pathlib import Path
+from typing import Dict, Any
+from ..debug_log import warning_logger
+from ..tree_sitter_manager import execute_query
+from .typescript import TypescriptTreeSitterParser
 
 def pre_scan_typescript(files: list[Path], parser_wrapper) -> dict:
     """
@@ -61,10 +65,6 @@ def pre_scan_typescript(files: list[Path], parser_wrapper) -> dict:
         except Exception as e:
             warning_logger(f"Tree-sitter pre-scan failed for {path}: {e}")
     return imports_map
-from typing import Dict, Any
-from ..debug_log import warning_logger
-from ..tree_sitter_manager import execute_query
-from .typescript import TypescriptTreeSitterParser
 
 class TypescriptJSXTreeSitterParser(TypescriptTreeSitterParser):
     """

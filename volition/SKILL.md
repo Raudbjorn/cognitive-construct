@@ -1,25 +1,56 @@
 ---
 name: volition
-description: Agency and execution. Edit code semantically, invoke LLMs, search the web, query security services, and discover relevant skills.
-version: 5.1.0
+description: Agency and execution. Edit code semantically, invoke LLMs, search the web, and query security services.
+version: 6.0.0
 license: MIT
 metadata:
-  phase: 5
-  dependencies: python>=3.10, httpx, pydantic, sentence-transformers
+  phase: 6
+  dependencies: python>=3.12, httpx, pydantic, model2vec
 ---
 
 # Volition: The Will to Act
 
-> "Action without agency is reaction. Agency without action is paralysis. Volition is the synthesis."
+> "Between stimulus and response there is a space. In that space is our power
+> to choose our response. In our response lies our growth and our freedom."
+> — Viktor Frankl
 
 ## Overview
 
-**Volition** is the executive skill of the Cognitive Construct. It transforms intent into action: editing code semantically via LSP tools, invoking specialized LLMs for expert consultation, searching the web for current information, and querying security services with appropriate safeguards.
+**Volition** is the executive function of the Cognitive Construct. It transforms intent into deliberate, recoverable action through a five-stage pipeline: classify intent, build an action plan, validate before acting, execute with fallback recovery, and learn from outcomes.
+
+Volition replaces reactive keyword matching with semantic understanding. When you say "make the auth module more secure," it routes to code editing — not to Shodan — because it understands meaning, not just keywords.
+
+## Architecture
+
+Every action flows through this pipeline:
+
+```text
+user prompt → Intent Classifier (embedding + keyword fusion)
+                    |
+           confidence >= threshold?
+              yes /     \ no
+               |          |
+        Plan Builder    Clarification
+        (DAG steps)     Request (top-2)
+               |
+        Pre-flight Validator (4-pass)
+               |
+          all passes OK?
+            yes /    \ no
+             |        flags → user
+        Executor (step by step, with fallbacks)
+             |
+        Outcome Logger (audit + feedback)
+             |
+        result → user
+```
+
+The classifier fuses two signals via Reciprocal Rank Fusion (RRF): embedding similarity (Model2Vec, weighted 0.7) and keyword overlap (weighted 0.3). Historical feedback from prior executions provides a conservative adjustment (+-10%).
 
 ## Commands
 
 ### `act "<action>"`
-Execute a general action. Volition routes to the appropriate handler based on intent classification.
+Execute a general action. Volition classifies intent, builds an action plan, validates it, and executes.
 
 ```bash
 python3 volition.py act "refactor the authentication module for better security"
@@ -27,8 +58,22 @@ python3 volition.py act "refactor the authentication module for better security"
 
 **Output:**
 ```json
-{"status": "completed", "handler": "code_edit", "summary": "Refactored auth module..."}
+{
+  "status": "success",
+  "handler": "code_edit",
+  "confidence": 0.71,
+  "plan_id": "plan-a1b2c3d4",
+  "outcomes": [
+    {"step_id": "step-1", "handler": "code_edit", "status": "success", "summary": "..."}
+  ]
+}
 ```
+
+**Options:**
+- `--handler <name>`: Override automatic routing (`code_edit`, `llm_call`, `web_search`, `security`)
+- `--confirm`: Pre-confirm security actions
+- `--verbose`: Show full classification breakdown with embedding, keyword, and fused scores for all candidates
+- `--dry-run`: Show the action plan and pre-flight result without executing
 
 ### `edit "<symbol>" "<change>"`
 Perform semantic code edits using LSP-powered tools. Finds symbols by name and applies changes contextually.
@@ -58,8 +103,8 @@ Query external services for information.
 # Web search
 python3 volition.py query web "latest Python 3.13 features"
 
-# Security query (prompts for confirmation)
-python3 volition.py query security "exposed MongoDB instances in AS12345"
+# Security query (explicit confirmation required)
+python3 volition.py query security "exposed MongoDB instances in AS12345" --confirm
 
 # LLM consultation
 python3 volition.py query llm "best practices for JWT token rotation" --tag coding
@@ -87,123 +132,86 @@ python3 volition.py capabilities
 }
 ```
 
-## Skill Discovery
+## Confidence Gating
 
-Volition includes a skill index for finding relevant Claude Agent Skills. Use these commands to discover and load skills dynamically.
+When the classifier is not confident enough to route (fused score below threshold, default 0.65), Volition asks instead of guessing:
 
-### `skill search "<query>"`
-Find skills relevant to a task description using semantic search.
-
-```bash
-python3 volition.py skill search "debug Python API errors" --top_k 3
-```
-
-**Output:**
 ```json
 {
-  "success": true,
-  "data": [
-    {"name": "python-debugging", "description": "Debug Python applications...", "relevance": 0.8234},
-    {"name": "api-troubleshooting", "description": "Diagnose API issues...", "relevance": 0.7891}
+  "status": "clarification_required",
+  "message": "Intent is ambiguous. Did you mean one of these?",
+  "candidates": [
+    {"handler": "code_edit", "confidence": 0.52, "embedding_score": 0.55, "keyword_score": 0.49},
+    {"handler": "security", "confidence": 0.48, "embedding_score": 0.46, "keyword_score": 0.51}
   ],
-  "message": "Found 2 relevant skill(s)"
+  "action": "your original prompt text"
 }
 ```
 
-**Options:**
-- `--top_k N`: Number of results to return (default: 3)
-- `--list_docs`: Include document list in results
+This is Constitution Rule 1: uncertainty is information, not a bug. Override with `--handler` if you know what you want.
 
-### `skill read <name> [document]`
-Read a skill's content or specific documents.
+## Multi-Step Plans
 
-```bash
-# Read skill instructions (SKILL.md)
-python3 volition.py skill read python-debugging
+Compound actions ("review the auth module and fix any issues") are split into a DAG of steps with dependency ordering:
 
-# Read a specific document
-python3 volition.py skill read python-debugging scripts/debugger.py
-```
-
-**Output:**
 ```json
 {
-  "success": true,
-  "data": {"name": "python-debugging", "content": "...", "documents": ["scripts/debugger.py", "references/common-errors.md"]},
-  "message": "Loaded skill: python-debugging"
+  "plan_id": "plan-a1b2c3d4",
+  "steps": [
+    {"step_id": "step-1", "handler": "llm_call", "action": "Review the authentication module", "depends_on": []},
+    {"step_id": "step-2", "handler": "code_edit", "action": "Apply fixes from step-1", "depends_on": ["step-1"]}
+  ]
 }
 ```
 
-### `skill list`
-List all available skills in the index.
+Steps execute in topological order. Output from earlier steps flows as input to later steps. Use `--dry-run` to inspect the plan before execution.
 
-```bash
-python3 volition.py skill list
-```
+## Pre-flight Validation
 
-**Output:**
-```json
-{
-  "success": true,
-  "data": [
-    {"name": "python-debugging", "description": "Debug Python applications...", "document_count": 5},
-    {"name": "api-troubleshooting", "description": "Diagnose API issues...", "document_count": 3}
-  ],
-  "message": "Found 42 indexed skill(s)"
-}
-```
+Before any plan executes, four validation passes run:
 
-### `skill status`
-Check if the skill index is available.
+| Pass | Detects |
+|------|---------|
+| Capability check | Handler unavailable, missing API keys, disabled feature flags |
+| Input validation | Malformed inputs, missing fields, invalid step references |
+| Risk assessment | Unconfirmed security actions, high-risk steps without safeguards |
+| Dependency check | Circular dependencies, unreachable steps, broken references |
 
-```bash
-python3 volition.py skill status
-```
+If any pass produces a CRITICAL flag, the plan is blocked and the flags are returned to the user. Volition does not auto-remediate CRITICAL flags (Constitution Rule 3).
 
-**Output:**
-```json
-{
-  "success": true,
-  "data": {"available": true, "skill_count": 42, "model": "all-MiniLM-L6-v2"},
-  "message": "Skill index ready"
-}
-```
+## Fallback Chains
 
-**Note:** The skill index uses vector embeddings internally. Implementation details (model names, search algorithms, data sources) are opaque - you interact only through these commands.
+When a handler fails, Volition attempts fallbacks before giving up:
+
+- `code_edit` falls back to `text_edit`
+- Other handlers have no fallbacks (failure is reported immediately)
+
+If all fallbacks are exhausted, Volition stops executing any remaining steps in the plan; previously completed steps are not rolled back (Constitution Rule 6).
 
 ## Security Constraints (R.22-R.23)
 
 ### Shodan Queries
 
-Shodan queries are **restricted operations** with mandatory safeguards per requirements R.22-R.23:
+Shodan queries are **restricted operations** with mandatory safeguards:
 
-1. **Explicit --confirm Flag Required (R.22.1)**: Every Shodan query requires the `--confirm` flag. No interactive prompts bypass this requirement:
+1. **Explicit --confirm Flag Required (R.22.1)**: Every Shodan query requires `--confirm` to execute. Without it, the query returns a `confirmation_required` status with guidance:
    ```bash
-   # This will prompt for confirmation (returns confirmation_required status)
-   python3 volition.py query security "exposed MongoDB instances"
-
-   # Explicitly confirm (use with caution)
    python3 volition.py query security "exposed MongoDB instances" --confirm
    ```
 
-2. **Disable Flag (R.22.2)**: Shodan can be completely disabled via environment variable:
+2. **Disable Flag (R.22.2)**: Disable Shodan via environment:
    ```bash
-   VOLITION_DISABLE_SHODAN=true  # Disables all Shodan queries
-   NOCP_FLAG_SHODAN_ENABLED=false  # Feature flag alternative
+   VOLITION_DISABLE_SHODAN=true
+   NOCP_FLAG_SHODAN_ENABLED=false
    ```
 
-3. **Data Redaction (R.22.3)**: IP addresses in results are partially redacted for privacy:
-   ```json
-   {"ip": "192.168.xxx.xxx", "port": 27017, "org": "Example Org"}
-   ```
+3. **Data Redaction (R.22.3)**: IP addresses in results are partially redacted (e.g., `192.168.xxx.xxx`).
 
-4. **Audit Logging with Severity (R.22.4)**: All queries logged with governance metadata:
-   - File: `~/.volition/shodan_audit.jsonl`
-   - Fields: requester, target, query, justification, result, severity, timestamp
+4. **Audit Logging with Severity (R.22.4)**: All queries are logged to `~/.volition/shodan_audit.jsonl` with fields: `requester`, `query`, `target`, `result_count`, `severity`, and `timestamp`.
 
-5. **Rate Limiting (R.23.1)**: Maximum 10 queries per hour. Exceeding returns error.
+5. **Rate Limiting (R.23.1)**: Maximum 10 queries per hour. Exceeding this limit returns an error with the remaining cooldown time.
 
-6. **Clear Error on Unconfirmed (R.23.2)**: Unconfirmed queries return explicit error with guidance.
+6. **Clear Error on Unconfirmed (R.23.2)**: Unconfirmed queries return explicit guidance.
 
 ## Configuration
 
@@ -212,8 +220,7 @@ Shodan queries are **restricted operations** with mandatory safeguards per requi
 Set in `.env.local`:
 
 ```bash
-# Code Editing (Serena)
-# No API key required - uses local LSP servers
+# Code Editing (Serena) — no API key required, uses local LSP servers
 
 # LLM Consultation (at least one required)
 OPENAI_API_KEY=sk-...
@@ -227,26 +234,13 @@ OPENAI_API_KEY=sk-...  # Shared with LLM
 SHODAN_API_KEY=...  # Optional, enables security queries
 ```
 
-### Credential Validation
+### Tuning Variables
 
-Volition validates credentials at startup and returns clear errors:
-- Missing: `"SHODAN_API_KEY not found - security queries disabled"`
-- Invalid format: `"OPENAI_API_KEY has invalid format (expected sk-...)"`
-
-## Action Routing
-
-When using `act`, Volition classifies intent and routes to the appropriate handler:
-
-| Category | Keywords | Handler |
-|----------|----------|---------|
-| `code_edit` | refactor, edit, modify, add, remove, fix | Serena LSP |
-| `llm_call` | explain, analyze, review, suggest, consult | cross-llm-mcp |
-| `web_search` | search, find, lookup, what is, latest | openai-websearch |
-| `security` | scan, expose, vulnerability, shodan | mcp-shodan |
-
-Override automatic routing with `--handler`:
 ```bash
-python3 volition.py act "find security issues" --handler llm_call
+VOLITION_CONFIDENCE_THRESHOLD=0.65   # Classification confidence gate
+VOLITION_EMBEDDING_WEIGHT=0.7        # Weight for embedding signal in RRF
+VOLITION_KEYWORD_WEIGHT=0.3          # Weight for keyword signal in RRF
+VOLITION_LEARNING_RATE=0.2           # Feedback adjustment sensitivity
 ```
 
 ## Backends
@@ -257,9 +251,8 @@ Volition uses these libraries internally (implementation details are **opaque**)
 - **cross-llm**: Multi-provider LLM access
 - **openai-websearch**: Web search with reasoning
 - **shodan-client**: Security reconnaissance
-- **skill-search**: Vector similarity search for skill discovery
 
-You interact only through Volition's unified command interface. The underlying protocols (MCP, LSP, HTTP APIs) are hidden - you never see tool schemas, JSON-RPC, or protocol-level details.
+You interact only through Volition's unified command interface. The underlying protocols (MCP, LSP, HTTP APIs) are hidden.
 
 ## Error Handling
 
@@ -277,34 +270,28 @@ Error codes:
 
 ## Synergies
 
-Volition optionally integrates with other Cognitive Construct skills:
+Volition integrates with other Cognitive Construct skills:
 
-- **→ Inland Empire**: Actions are logged as memories for future recall
-- **← Rhetoric**: Complex actions can trigger deliberation before execution
+- **→ Inland Empire**: Completed actions are logged as memories for future recall
+- **← Rhetoric**: When `RHETORIC_PREFLIGHT` is enabled, high-risk steps trigger a Rhetoric deliberation before execution
 - **← Encyclopedia**: Code edits can fetch documentation context
 
-Enable synergies via `--synergy` flag or `VOLITION_SYNERGY=true` environment variable.
+Synergies operate transparently — if a downstream skill is unavailable (e.g., `shared.synergies` import fails), Volition continues without error. No feature flag is required; synergies are always attempted when the corresponding module is available.
+
+## Constitution
+
+Seven inviolable rules govern Volition's behavior. See `constitution.md` for full text.
+
+1. **Never execute** when the classifier is not confident — ask for clarification
+2. **Never execute** a security action without `--confirm`
+3. **Never execute** a plan that fails pre-flight validation
+4. **Never hide** classification uncertainty from the user
+5. **Never let** feedback adjustment override safety constraints
+6. **Always abort** the entire plan on step failure
+7. **Always log** before acting (audit entry written before execution begins)
 
 ## Files
 
-- `~/.volition/audit.log`: General audit trail for all actions
-- `~/.volition/shodan_audit.jsonl`: Shodan-specific audit log with severity metadata (R.22.4)
+- `~/.volition/audit.log`: General audit trail (JSONL, append-only)
+- `~/.volition/shodan_audit.jsonl`: Shodan-specific audit log with severity metadata
 - `~/.volition/rate_limits.json`: Rate limit state
-- `~/.volition/preferences.json`: User preferences and defaults
-
-## Synergies (Requirement 8.2)
-
-Volition logs all actions to Inland Empire via the SkillMessage bus for future recall:
-
-```python
-# Actions automatically logged to memory:
-# - code_edit: symbol, file, result
-# - llm_call: tag, prompt summary
-# - web_search: query
-# - security_query: target, matches
-
-# Control via feature flag:
-NOCP_FLAG_VOLITION_INLAND_EMPIRE_SYNERGY=true
-```
-
-Synergies operate transparently (R.8.5) - if Inland Empire is unavailable, actions complete without error.

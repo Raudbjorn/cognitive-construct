@@ -76,12 +76,14 @@ from .types import (
     SearchResult,
     VariableInfo,
 )
+from .indexer.config import IndexConfig
 from .result import Result, Ok, Err
 
 __all__ = [
     "CodeGraphClient",
     "DatabaseManager",
     "Neo4jConfig",
+    "IndexConfig",
     "FunctionInfo",
     "ClassInfo",
     "VariableInfo",

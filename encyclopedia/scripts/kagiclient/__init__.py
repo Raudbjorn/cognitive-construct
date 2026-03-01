@@ -1,16 +1,15 @@
 """
-kagiclient - Python client library for Kagi Search and Summarizer API
+kagiclient - Python client library for Kagi Search, FastGPT, Summarizer, and Enrich APIs.
 
 Usage:
     from kagiclient import KagiClient
 
     client = KagiClient(api_key="your-key")  # or set KAGI_API_KEY env var
 
-    # Search
-    result = await client.search("latest python frameworks 2024")
+    # FastGPT (AI answer — no Search API beta needed)
+    result = await client.fastgpt("explain Rust ownership")
     if result.is_ok():
-        for r in result.value.results:
-            print(f"{r.title}: {r.url}")
+        print(result.value.output)
 
     # Summarize
     result = await client.summarize("https://example.com/article")
@@ -18,9 +17,13 @@ Usage:
         print(result.value.summary)
 """
 
-from .client import KagiClient, search, summarize
+from .client import KagiClient, search, fastgpt, summarize, enrich
 from .types import (
+    EnrichResponse,
+    EnrichResult,
     ErrorCode,
+    FastGPTReference,
+    FastGPTResponse,
     KagiError,
     SearchResponse,
     SearchResult,
@@ -33,7 +36,13 @@ from .result import Result, Ok, Err
 __all__ = [
     "KagiClient",
     "search",
+    "fastgpt",
     "summarize",
+    "enrich",
+    "EnrichResponse",
+    "EnrichResult",
+    "FastGPTReference",
+    "FastGPTResponse",
     "SearchResponse",
     "SearchResult",
     "SummaryResponse",
@@ -46,4 +55,4 @@ __all__ = [
     "Err",
 ]
 
-__version__ = "1.0.0"
+__version__ = "2.0.0"

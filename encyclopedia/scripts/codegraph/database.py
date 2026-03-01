@@ -139,6 +139,10 @@ class DatabaseManager:
                     self._driver.close()
                     self._driver = None
 
+    def get_backend_type(self) -> str:
+        """Return database backend type."""
+        return "neo4j"
+
     def is_connected(self) -> bool:
         """Check if connected to database."""
         if self._driver is None:

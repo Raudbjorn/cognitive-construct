@@ -2,7 +2,7 @@
 
 ## Inviolable Rules
 
-These rules govern both subsystems (deliberation + validation) and cannot be overridden.
+These rules govern the argumentation engine and cannot be overridden.
 
 1. **NEVER construct arguments the agent knows to be false.**
    Rhetoric serves truth, not victory.

@@ -312,9 +312,15 @@ class ValidationResult(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class ResistanceStrength(StrEnum):
+    STRONG = "strong"
+    MODERATE = "moderate"
+    MILD = "mild"
+
+
 class ResistancePoint(BaseModel):
     topic: str
-    strength: str  # "strong" | "moderate" | "mild"
+    strength: ResistanceStrength
     basis: str
 
 

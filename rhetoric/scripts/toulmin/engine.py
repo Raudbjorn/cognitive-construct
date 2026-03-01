@@ -52,7 +52,11 @@ class RhetoricPlan:
 
     @property
     def is_sound(self) -> bool:
-        return self.validation.status in (ValidationStatus.VALID, ValidationStatus.FLAGGED)
+        if self.validation.status == ValidationStatus.VALID:
+            return True
+        if self.validation.status == ValidationStatus.FLAGGED:
+            return len(self.validation.critical_flags) == 0
+        return False
 
     def summary(self) -> str:
         """Human-readable summary of the plan."""
@@ -153,13 +157,13 @@ class RhetoricEngine:
             known_support=known_support,
         )
 
-        iterations = 1
+        iterations = 0
 
         while (
             validation.status == ValidationStatus.FLAGGED
             and iterations < MAX_REMEDIATION_ITERATIONS
         ):
-            logger.info("Step 2.%d: Attempting remediation (iteration %d)", iterations, iterations + 1)
+            logger.info("Step 2.%d: Attempting remediation (iteration %d)", iterations + 1, iterations + 1)
             graph = _apply_remediations(graph, validation)
             validation = validate(
                 graph,

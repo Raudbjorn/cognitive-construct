@@ -115,11 +115,17 @@ async def generate_analogy(
     # Parse response
     try:
         body = resp.json()
-        raw_text: str = body["choices"][0]["message"]["content"]
+        raw_content = body["choices"][0]["message"]["content"]
     except (KeyError, IndexError, json.JSONDecodeError) as e:
         return BridgeError(message=f"Malformed API response: {e}", raw_response=str(resp.text)[:500])
 
-    cleaned = raw_text.strip()
+    if not isinstance(raw_content, str):
+        return BridgeError(
+            message=f"API returned non-string content: {type(raw_content).__name__}",
+            raw_response=str(raw_content)[:500],
+        )
+
+    cleaned = raw_content.strip()
     if cleaned.startswith("```"):
         lines = cleaned.split("\n")
         cleaned = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])

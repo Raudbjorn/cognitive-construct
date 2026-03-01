@@ -355,7 +355,7 @@ def _validate_abductive(graph: ArgumentGraph) -> list[Flag]:
         "alternative" in r.text.lower() or "other explanation" in r.text.lower()
         for r in graph.rebuttals
     )
-    if not has_alternative_rebuttal and not graph.rebuttals:
+    if not has_alternative_rebuttal:
         flags.append(Flag(
             type="single_explanation",
             severity=FlagSeverity.WARNING,

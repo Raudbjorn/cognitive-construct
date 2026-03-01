@@ -13,6 +13,9 @@ Models:
     RhetoricPlan, EngineError, DecompositionError, BridgeError
 """
 
+from toulmin.bridge import BridgeError, generate_analogy
+from toulmin.decompose import DecompositionError, decompose
+from toulmin.engine import EngineError, RhetoricEngine, RhetoricPlan
 from toulmin.models import (
     Analogy,
     ArgumentGraph,
@@ -25,15 +28,26 @@ from toulmin.models import (
     ValidationResult,
     Warrant,
 )
+from toulmin.strategy import select_strategy
 from toulmin.validate import validate
 
 __all__ = [
-    # Core validation
+    # Core functions
     "validate",
+    "decompose",
+    "select_strategy",
+    "generate_analogy",
+    # Engine
+    "RhetoricEngine",
+    "RhetoricPlan",
+    # Error types
+    "EngineError",
+    "DecompositionError",
+    "BridgeError",
     # Models
+    "Analogy",
     "ArgumentGraph",
     "AudienceModel",
-    "Analogy",
     "Backing",
     "Claim",
     "Datum",

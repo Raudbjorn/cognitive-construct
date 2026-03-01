@@ -1,0 +1,33 @@
+[project]
+name = "toulmin"
+version = "0.1.0"
+description = "Symbolic validation engine for Toulmin argumentation graphs"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.28",
+    "pydantic>=2.10",
+]
+
+[project.optional-dependencies]
+dev = [
+    "mypy>=1.14",
+    "ruff>=0.9",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.25",
+]
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+plugins = ["pydantic.mypy"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "A", "SIM", "TCH"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

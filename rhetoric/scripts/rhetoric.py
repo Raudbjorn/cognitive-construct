@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Rhetoric: The Reasoning Engine
-CLI entrypoint for structured reasoning and deliberation.
+Rhetoric: Deliberation + Argumentation Engine
+CLI entrypoint for dialectical deliberation and Toulmin argument validation.
 """
 
 import argparse
@@ -10,166 +10,43 @@ import json
 import logging
 import os
 import sys
-import time
-from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import List
 
-# Add parent directory to path so we can import local modules
-# Structure: rhetoric/scripts/rhetoric.py, rhetoric/ai-counsel/, rhetoric/sequentialthinking_py/, etc.
-_rhetoric_dir = Path(__file__).parent.parent
-sys.path.insert(0, str(_rhetoric_dir))
-sys.path.insert(0, str(_rhetoric_dir / "ai-counsel"))
+# Add parent directories to path for local module imports
+# Structure: rhetoric/scripts/rhetoric.py, rhetoric/scripts/ai-counsel/, rhetoric/scripts/toulmin/
+_scripts_dir = Path(__file__).parent
+_rhetoric_dir = _scripts_dir.parent
+sys.path.insert(0, str(_scripts_dir / "ai-counsel"))
+sys.path.insert(0, str(_scripts_dir))  # Makes 'import toulmin' work
 
 from ai_counsel.client import AICounselClient, Participant
 from ai_counsel.types import DeliberationResult
-from sequentialthinking_py.client import SequentialThinkingClient
-from sequentialthinking_py.types import ThoughtInput, ThoughtData
-from vibecheck_py.client import VibeCheckClient, VibeCheckInput, VibeCheckResponse
 
 # Configure logging
 logging.basicConfig(level=logging.ERROR, format='%(message)s')
 logger = logging.getLogger("rhetoric")
 
-THOUGHTS_FILE = Path("thoughts.json")
+# Dialectical role assignment order
+_ROLE_ORDER = ("proponent", "opponent", "synthesizer")
 
-@dataclass
-class ThoughtRecord:
-    id: str
-    timestamp: str
-    session_id: str
-    content: str
-    type: str
-    revision_of: Optional[str] = None
-    thought_number: int = 0
-    total_thoughts: int = 0
 
-class ThinkingManager:
-    """Manages persistence for thoughts."""
-    
-    def __init__(self, filepath: Path = THOUGHTS_FILE):
-        self.filepath = filepath
-        self.history: List[dict] = []
-        self.load()
+def _assign_roles(participants: List[Participant]) -> List[Participant]:
+    """Auto-assign dialectical roles to participants.
 
-    def load(self):
-        if self.filepath.exists():
-            try:
-                with open(self.filepath, 'r') as f:
-                    self.history = json.load(f)
-            except json.JSONDecodeError:
-                self.history = []
-        else:
-            self.history = []
+    First = proponent, second = opponent, third+ = synthesizer.
+    """
+    assigned = []
+    for i, p in enumerate(participants):
+        role = _ROLE_ORDER[min(i, len(_ROLE_ORDER) - 1)]
+        assigned.append(Participant(adapter=p.adapter, model=p.model, role=role))
+    return assigned
 
-    def save(self):
-        with open(self.filepath, 'w') as f:
-            json.dump(self.history, f, indent=2)
 
-    def add_thought(self, thought_data: ThoughtData, session_id: str):
-        import uuid
-        from datetime import datetime
-        
-        thought_id = f"th-{uuid.uuid4().hex[:8]}"
-        timestamp = datetime.now().isoformat()
-        
-        record = {
-            "id": thought_id,
-            "timestamp": timestamp,
-            "session_id": session_id,
-            "content": thought_data.thought,
-            "type": "analysis", # Default type
-            "revision_of": None, # Needs logic to link if it is a revision
-            "thought_number": thought_data.thought_number,
-            "total_thoughts": thought_data.total_thoughts,
-            "is_revision": thought_data.is_revision,
-            "revises_thought": thought_data.revises_thought,
-            "branch_from_thought": thought_data.branch_from_thought,
-            "branch_id": thought_data.branch_id
-        }
-        
-        if thought_data.is_revision and thought_data.revises_thought:
-            # Find the ID of the thought being revised (simplified logic: find last thought with that number in session)
-            # ideally client provides the ID, but sequentialthinking_py uses numbers.
-            pass
-
-        self.history.append(record)
-        self.save()
-        return thought_id
-
-    def get_session_thoughts(self, session_id: str) -> List[dict]:
-        return [t for t in self.history if t.get("session_id") == session_id]
-
-    def get_stats(self):
-        sessions = set(t.get("session_id") for t in self.history)
-        return {
-            "total_thoughts": len(self.history),
-            "active_sessions": len(sessions)
-        }
-
-async def cmd_think(args):
-    """Execute think command."""
-    client = SequentialThinkingClient(disable_logging=True)
-    manager = ThinkingManager()
-    
-    # Determine thought number if not provided
-    session_thoughts = manager.get_session_thoughts(args.session_id)
-    current_thought_number = len(session_thoughts) + 1
-    
-    if args.revision_of:
-        # If revising, we need to find the thought number of the revised thought
-        # This is a simplification. Real implementation would look up ID.
-        pass
-
-    input_data = ThoughtInput(
-        thought=args.thought,
-        thought_number=current_thought_number,
-        total_thoughts=max(current_thought_number, 5), # Default total
-        next_thought_needed=True,
-        is_revision=bool(args.revision_of),
-        branch_from_thought=None # Needs parsing from args if supported
-    )
-
-    result = client.process_thought(input_data)
-    
-    if result.is_ok():
-        resp = result.value
-        # Use the data from the input mostly, as response is minimal
-        # Create a ThoughtData object to pass to manager
-        t_data = ThoughtData(
-            thought=args.thought,
-            thought_number=resp.thought_number,
-            total_thoughts=resp.total_thoughts,
-            next_thought_needed=resp.next_thought_needed,
-            is_revision=input_data.is_revision,
-            revises_thought=input_data.revises_thought,
-            branch_from_thought=input_data.branch_from_thought,
-            branch_id=input_data.branch_id,
-            needs_more_thoughts=input_data.needs_more_thoughts
-        )
-        
-        thought_id = manager.add_thought(t_data, args.session_id)
-
-        print(json.dumps({
-            "status": "success",
-            "thought_id": thought_id,
-            "session_id": args.session_id,
-            "thought_number": resp.thought_number,
-            "total_thoughts": resp.total_thoughts,
-            "thought": args.thought,  # Include the thought content for downstream processing
-            "next_thought_needed": resp.next_thought_needed
-        }, indent=2))
-    else:
-        print(json.dumps({
-            "status": "error",
-            "message": result.error.message
-        }, indent=2))
-        sys.exit(1)
-
-async def cmd_deliberate(args):
-    """Execute deliberate command."""
+async def cmd_deliberate(args: argparse.Namespace) -> None:
+    """Execute deliberate command with dialectical role assignment."""
     # Check for API keys and build available models list
-    available_models = []
+    available_models: List[str] = []
     if os.environ.get("OPENAI_API_KEY"):
         available_models.append("openai")
     if os.environ.get("ANTHROPIC_API_KEY"):
@@ -188,12 +65,12 @@ async def cmd_deliberate(args):
         sys.exit(1)
 
     # Setup participants based on available keys
-    participants = []
+    participants: List[Participant] = []
     if "openai" in available_models:
         participants.append(Participant(adapter="openai", model="gpt-4o"))
     if "anthropic" in available_models:
         participants.append(Participant(adapter="anthropic", model="claude-sonnet-4-20250514"))
-    if "openrouter" in available_models and len(participants) < 2:
+    if "openrouter" in available_models and len(participants) < 3:
         participants.append(Participant(adapter="openrouter", model="google/gemini-flash-1.5"))
     if "ollama" in available_models and len(participants) < 2:
         participants.append(Participant(adapter="ollama", model="llama3.2"))
@@ -206,12 +83,21 @@ async def cmd_deliberate(args):
         }, indent=2))
         sys.exit(1)
 
+    # Auto-assign dialectical roles
+    participants = _assign_roles(participants)
+
+    if args.debug:
+        role_summary = ", ".join(
+            f"{p.model}@{p.adapter}={p.role}" for p in participants
+        )
+        print(f"[debug] Roles: {role_summary}", file=sys.stderr)
+
     client = AICounselClient(enable_transcripts=True, enable_decision_graph=False)
 
     try:
         result = await client.deliberate(
             question=args.question,
-            participants=participants[:2],  # Use first 2 participants
+            participants=participants,
             rounds=args.rounds,
             context=args.context
         )
@@ -239,91 +125,10 @@ async def cmd_deliberate(args):
     finally:
         await client.close()
 
-async def cmd_review(args):
-    """Execute review command."""
-    manager = ThinkingManager()
-    thoughts = manager.get_session_thoughts(args.session_id)
 
-    # Analyze patterns
-    revisions = sum(1 for t in thoughts if t.get("is_revision"))
-    branches = sum(1 for t in thoughts if t.get("branch_from_thought"))
-    count = len(thoughts)
-
-    revision_rate = revisions / count if count > 0 else 0
-
-    detected_issues = []
-    recommendations = []
-
-    # Use VibeCheck for pattern analysis if we have enough thoughts
-    if count >= 3:
-        try:
-            # Build summary of thinking for vibe check
-            thought_summary = "\n".join(
-                f"{i+1}. {t.get('content', '')[:100]}"
-                for i, t in enumerate(thoughts[-5:])  # Last 5 thoughts
-            )
-
-            client = VibeCheckClient()
-            vibe_input = VibeCheckInput(
-                goal="Review thinking patterns for cognitive biases",
-                plan=f"Analyzed {count} thoughts with {revision_rate:.0%} revision rate",
-                progress=thought_summary,
-                session_id=args.session_id
-            )
-
-            result = await client.vibe_check(vibe_input)
-
-            if result.is_ok():
-                # Parse vibe check response for issues
-                response_text = result.value.questions.lower()
-
-                # Detect common patterns from vibe check output
-                if "analysis paralysis" in response_text or revision_rate > 0.4:
-                    detected_issues.append("analysis_paralysis")
-                if "scope" in response_text or "creep" in response_text:
-                    detected_issues.append("scope_creep")
-                if "assumption" in response_text:
-                    detected_issues.append("unchecked_assumptions")
-                if "bias" in response_text:
-                    detected_issues.append("confirmation_bias")
-
-        except Exception:
-            pass  # Fall back to basic analysis
-
-    # Generate recommendations based on patterns
-    if revision_rate > 0.3:
-        recommendations.append("High revision rate suggests indecision - consider narrowing scope")
-    if branches > 2:
-        recommendations.append("Multiple branches detected - consider converging on main path")
-    if count < 3:
-        recommendations.append("Keep thinking - more analysis needed")
-    elif count > 10 and not detected_issues:
-        recommendations.append("Consider converging toward a decision")
-    if "analysis_paralysis" in detected_issues:
-        recommendations.append("Analysis paralysis detected - make a decision to proceed")
-
-    if not recommendations:
-        recommendations.append("Thinking patterns look healthy")
-
-    print(json.dumps({
-        "status": "success",
-        "session_id": args.session_id,
-        "thought_count": count,
-        "patterns": {
-            "revision_rate": round(revision_rate, 2),
-            "branch_count": branches,
-            "detected_issues": detected_issues
-        },
-        "recommendations": recommendations
-    }, indent=2))
-
-async def cmd_status(args):
-    """Execute status command."""
-    manager = ThinkingManager()
-    stats = manager.get_stats()
-
-    # Count available models with providers info
-    available_providers = []
+async def cmd_status(args: argparse.Namespace) -> None:
+    """Execute status command — report providers and deliberation readiness."""
+    available_providers: List[str] = []
     if os.environ.get("OPENAI_API_KEY"):
         available_providers.append("openai")
     if os.environ.get("ANTHROPIC_API_KEY"):
@@ -338,26 +143,18 @@ async def cmd_status(args):
     models = len(available_providers)
 
     print(json.dumps({
-        "active_sessions": stats["active_sessions"],
-        "total_thoughts": stats["total_thoughts"],
         "models_available": models,
         "providers": available_providers,
         "deliberation_ready": models >= 2,
-        "last_activity": manager.history[-1]["timestamp"] if manager.history else None
     }, indent=2))
 
-def main():
-    parser = argparse.ArgumentParser(description="Rhetoric: The Reasoning Engine")
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Rhetoric: Deliberation + Argumentation Engine")
     subparsers = parser.add_subparsers(dest="command", help="Command to execute")
 
-    # Think
-    think_parser = subparsers.add_parser("think", help="Record a thought")
-    think_parser.add_argument("thought", help="The thought content")
-    think_parser.add_argument("--session-id", default="default", help="Session ID")
-    think_parser.add_argument("--revision-of", help="ID of thought to revise")
-    think_parser.add_argument("--branch-from", help="ID of thought to branch from")
+    # --- Deliberation subsystem (ai-counsel) ---
 
-    # Deliberate
     deliberate_parser = subparsers.add_parser("deliberate", help="Deliberate on a question")
     deliberate_parser.add_argument("question", help="Question to deliberate")
     deliberate_parser.add_argument("--rounds", type=int, default=2, help="Number of rounds")
@@ -365,12 +162,19 @@ def main():
     deliberate_parser.add_argument("--debug", action="store_true", help="Show debug info")
     deliberate_parser.add_argument("--allow-single", action="store_true", help="Allow single model (dev)")
 
-    # Review
-    review_parser = subparsers.add_parser("review", help="Review session")
-    review_parser.add_argument("--session-id", default="default", help="Session ID")
+    subparsers.add_parser("status", help="Get system status")
 
-    # Status
-    status_parser = subparsers.add_parser("status", help="Get system status")
+    # --- Toulmin validation subsystem ---
+
+    plan_parser = subparsers.add_parser("plan", help="Analyze argument structure (Toulmin)")
+    plan_parser.add_argument("intent", help="The argument to analyze")
+    plan_parser.add_argument("--no-bridge", action="store_true", help="Skip analogy bridge")
+    plan_parser.add_argument("--contradict", nargs="*", default=[], help="Known contradicting evidence")
+
+    validate_parser = subparsers.add_parser("validate", help="Validate a Toulmin graph from JSON")
+    validate_parser.add_argument("file", help="Path to JSON ArgumentGraph file")
+
+    subparsers.add_parser("demo", help="Run Toulmin validation demos (no API needed)")
 
     args = parser.parse_args()
 
@@ -378,22 +182,29 @@ def main():
         parser.print_help()
         sys.exit(1)
 
-    # Check configuration before running
-    try:
-        sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-        from shared.config_check import require_skill_config
-        require_skill_config("rhetoric")
-    except ImportError:
-        pass  # shared module not available, skip check
+    # Check configuration before running deliberation commands
+    if args.command in ("deliberate", "status"):
+        try:
+            sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+            from shared.config_check import require_skill_config
+            require_skill_config("rhetoric")
+        except ImportError:
+            pass  # shared module not available, skip check
 
-    if args.command == "think":
-        asyncio.run(cmd_think(args))
-    elif args.command == "deliberate":
+    if args.command == "deliberate":
         asyncio.run(cmd_deliberate(args))
-    elif args.command == "review":
-        asyncio.run(cmd_review(args))
     elif args.command == "status":
         asyncio.run(cmd_status(args))
+    elif args.command == "plan":
+        from toulmin.cli import run_plan
+        asyncio.run(run_plan(args))
+    elif args.command == "validate":
+        from toulmin.cli import run_validate
+        run_validate(args)
+    elif args.command == "demo":
+        from toulmin.cli import run_demo
+        run_demo()
+
 
 if __name__ == "__main__":
     main()

@@ -28,6 +28,13 @@ class Participant(BaseModel):
         default=None,
         description="Reasoning effort level (unused for HTTP adapters, kept for compatibility).",
     )
+    role: Literal["proponent", "opponent", "synthesizer"] = Field(
+        default="proponent",
+        description=(
+            "Dialectical role: 'proponent' argues in favor, "
+            "'opponent' challenges, 'synthesizer' integrates positions."
+        ),
+    )
 
 
 class DeliberateRequest(BaseModel):

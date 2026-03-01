@@ -204,18 +204,15 @@ class DeliberationEngine:
         """
         responses = []
 
-        # Inject graph context into round 1 prompts
+        # Prepare base prompt with graph context for round 1
         if round_num == 1 and graph_context:
-            enhanced_prompt_base = f"{graph_context}\n\n## Current Question\n{prompt}"
+            base_prompt = f"{graph_context}\n\n## Current Question\n{prompt}"
         else:
-            enhanced_prompt_base = prompt
+            base_prompt = prompt
 
-        # Enhance prompt with voting instructions
-        enhanced_prompt = self._enhance_prompt_with_voting(enhanced_prompt_base)
-
-        # Inject file tree for Round 1 if working_directory is provided
+        # Prepare file tree prefix for round 1 (shared across participants)
+        tree_prefix = ""
         if round_num == 1 and working_directory:
-            # Read from config with defaults
             file_tree_config = (
                 self.config.deliberation.file_tree
                 if self.config and hasattr(self.config, "deliberation")
@@ -230,8 +227,8 @@ class DeliberationEngine:
                     max_depth=file_tree_config.max_depth,
                     max_files=file_tree_config.max_files,
                 )
-                if file_tree:  # Only inject if tree generation succeeded
-                    tree_context = f"""
+                if file_tree:
+                    tree_prefix = f"""
 ## Repository Structure
 
 The following files are available in the working directory:
@@ -247,11 +244,9 @@ The following files are available in the working directory:
 
 **Workflow:** Use the structure above to identify relevant files, then use tools to explore them.
 """
-                    enhanced_prompt = f"{tree_context}\n\n{enhanced_prompt}"
-                    # Approximate token count (1 token ≈ 4 chars for English text)
-                    approx_tokens = len(tree_context) // 4
+                    approx_tokens = len(tree_prefix) // 4
                     logger.info(
-                        f"Injected file tree into Round 1 prompt (~{approx_tokens} tokens, {len(tree_context)} chars)"
+                        f"Prepared file tree for Round 1 (~{approx_tokens} tokens, {len(tree_prefix)} chars)"
                     )
                 else:
                     logger.warning(
@@ -269,9 +264,18 @@ The following files are available in the working directory:
             # Get the appropriate adapter
             adapter = self.adapters[participant.cli]
 
+            # Build role-aware prompt for this participant
+            enhanced_prompt = self._build_participant_prompt(
+                participant, base_prompt, round_num
+            )
+            if tree_prefix:
+                enhanced_prompt = f"{tree_prefix}\n\n{enhanced_prompt}"
+
+            role = getattr(participant, "role", "proponent")
             reasoning_info = f", reasoning_effort={participant.reasoning_effort}" if participant.reasoning_effort else ""
             logger.info(
                 f"Round {round_num}: Invoking {participant.model}@{participant.cli} "
+                f"(role={role}) "
                 f"with prompt_length={len(enhanced_prompt)} chars, "
                 f"context_length={len(context) if context else 0} chars, "
                 f"working_directory={working_directory}{reasoning_info}"
@@ -677,9 +681,182 @@ Example:
 VOTE: {"option": "Option A", "confidence": 0.9, "rationale": "Lower risk and better architectural fit"}
 """.strip()
 
+    # === Role-specific prompt templates ===
+
+    _ROLE_TEMPLATES: Dict[str, Dict[str, str]] = {
+        "proponent": {
+            "round_1": """## Your Role: Proponent
+You are arguing IN FAVOR of the strongest position on this question.
+Build the most compelling case you can.
+
+Structure your argument as:
+
+### Claim
+State your position clearly in 1-2 sentences.
+
+### Warrant
+Explain the reasoning principle that supports your claim.
+
+### Evidence
+Provide concrete evidence, examples, or references.
+
+### Anticipated Objections
+Address the strongest counterargument preemptively.""",
+            "round_n": """## Your Role: Proponent
+You are defending your position. Address the opponent's challenges directly.
+
+Structure your response as:
+
+### Reaffirmed Claim
+Restate or refine your position based on the debate so far.
+
+### Rebuttal
+Directly address the opponent's strongest counter-argument.
+
+### New Evidence
+Provide additional evidence or reasoning the opponent has not addressed.
+
+### Concessions
+Acknowledge any valid points from the opposition (if any).""",
+        },
+        "opponent": {
+            "round_1": """## Your Role: Opponent
+You are the critical examiner. Challenge the strongest position.
+Find weaknesses, unstated assumptions, and failure modes.
+
+Structure your argument as:
+
+### Counter-Claim
+State your opposing position or identify the flaw.
+
+### Warrant
+Explain why the proponent's reasoning fails or is incomplete.
+
+### Evidence
+Provide concrete counter-evidence, edge cases, or precedents.
+
+### Rebuttal
+Directly address the proponent's strongest point and explain why it's insufficient.""",
+            "round_n": """## Your Role: Opponent
+Continue your critical examination. The proponent has responded — find what remains unaddressed.
+
+Structure your response as:
+
+### Refined Counter-Claim
+Update your critique based on the proponent's response.
+
+### Unaddressed Weaknesses
+What did the proponent fail to adequately answer?
+
+### New Challenges
+Raise issues that emerged from the proponent's defense.
+
+### Assessment
+How strong is the proponent's case after this exchange?""",
+        },
+        "synthesizer": {
+            "round_1": """## Your Role: Synthesizer
+You identify what's valid in each position and propose a resolution.
+
+Structure your analysis as:
+
+### Points of Agreement
+What do both sides actually agree on?
+
+### Genuine Tensions
+Where are the real irreconcilable differences?
+
+### Proposed Resolution
+How can we integrate the strongest elements of each position?
+
+### Remaining Risks
+What risks does your synthesis NOT address?""",
+            "round_n": """## Your Role: Synthesizer
+The debate has progressed. Update your synthesis based on the latest exchanges.
+
+Structure your analysis as:
+
+### Evolved Agreement
+How has the common ground shifted?
+
+### Resolved Tensions
+Which disagreements have been settled through the debate?
+
+### Updated Resolution
+Refine your proposed integration of both positions.
+
+### Open Questions
+What still needs resolution?""",
+        },
+    }
+
+    def _build_participant_prompt(
+        self, participant: Participant, prompt: str, round_num: int
+    ) -> str:
+        """
+        Build a role-aware prompt for a specific participant.
+
+        Args:
+            participant: The participant (includes role)
+            prompt: The base question or topic
+            round_num: Current round number (1-indexed)
+
+        Returns:
+            Full prompt with role instructions, tool instructions, question, and voting format
+        """
+        role = getattr(participant, "role", "proponent")
+        templates = self._ROLE_TEMPLATES.get(role, self._ROLE_TEMPLATES["proponent"])
+
+        # Round 1 gets opening templates; round 2+ gets continuation templates
+        # Synthesizers only participate from round 2 onward in the plan,
+        # but we provide round_1 template as fallback
+        template_key = "round_1" if round_num == 1 else "round_n"
+        role_instructions = templates[template_key]
+
+        # Add tool usage instructions if tool executor is available
+        tool_instructions = ""
+        if self.tool_executor:
+            tool_instructions = """
+
+## Evidence-Based Deliberation
+
+You have access to tools to gather concrete evidence. Use them actively:
+
+**Available Tools:**
+- `read_file`: Read file contents (use relative or absolute paths)
+- `search_code`: Search codebase with regex patterns
+- `list_files`: List files matching glob patterns
+- `run_command`: Execute safe read-only commands
+- `get_file_tree`: Get file tree with custom depth/file limits
+
+**How to use tools:**
+```
+TOOL_REQUEST: {"name": "read_file", "arguments": {"path": "src/file.py"}}
+```
+
+**IMPORTANT:**
+- If asked to review code or analyze files, USE THE TOOLS - don't assume files don't exist
+- Tools execute in the client's working directory, so relative paths work
+- Gather evidence first, then provide analysis based on actual data
+- Tool results are visible to all participants in subsequent rounds"""
+            logger.debug("Tool instructions INCLUDED in participant prompt")
+        else:
+            logger.debug("Tool instructions NOT included - tool executor not available")
+
+        voting_instructions = self._build_voting_instructions()
+        full_prompt = f"{role_instructions}{tool_instructions}\n\n## Question\n{prompt}\n\n{voting_instructions}"
+        logger.debug(
+            f"Built {role} prompt for {participant.model}@{participant.cli} "
+            f"(round {round_num}, {len(full_prompt)} chars)"
+        )
+        return full_prompt
+
     def _enhance_prompt_with_voting(self, prompt: str) -> str:
         """
         Enhance prompt with deliberation context and voting instructions.
+
+        Deprecated: prefer _build_participant_prompt for role-aware prompts.
+        Kept for backward compatibility with callers that don't pass participants.
 
         Args:
             prompt: Original question or prompt

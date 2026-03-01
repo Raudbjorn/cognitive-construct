@@ -330,7 +330,7 @@ class AICounselClient:
         from models.schema import Participant as InternalParticipant
 
         internal_participants = [
-            InternalParticipant(cli=p.adapter, model=p.model)
+            InternalParticipant(cli=p.adapter, model=p.model, role=p.role)
             for p in participants
         ]
 

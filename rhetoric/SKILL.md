@@ -1,47 +1,29 @@
 ---
 name: rhetoric
-description: Structured reasoning and deliberation. Record thoughts, deliberate on decisions, review thinking patterns.
+description: Dialectical deliberation and Toulmin argumentation engine — two subsystems for structured reasoning.
 license: MIT
 metadata:
-  version: 2.0.0
-  dependencies: python>=3.10, httpx, pydantic
+  version: 4.0.0
+  dependencies: python>=3.12, httpx, pydantic
 ---
 
-# Rhetoric: The Reasoning Engine
+# Rhetoric: Deliberation + Argumentation Engine
 
-> "The unexamined thought is not worth having."
+> "Give me a place to stand, and I will move the world." — Archimedes
 
 ## Overview
 
-**Rhetoric** provides structured reasoning capabilities for complex problem-solving. It records thoughts with full revision tracking, orchestrates multi-model deliberation for decisions, and reviews thinking patterns to detect cognitive biases.
+**Rhetoric** has two complementary subsystems:
+
+1. **Deliberation** (ai-counsel) — Multi-model dialectical debate with convergence detection. Models argue as proponent/opponent/synthesizer.
+2. **Validation** (toulmin) — Symbolic Toulmin argumentation engine that decomposes arguments into formal graphs, validates inferential steps, and calibrates delivery to audience epistemic state.
 
 ## Commands
 
-### `think "<thought>" [--session-id <id>]`
-Record a thought with structured metadata. Supports revision tracking and branching.
+### Deliberation Subsystem
 
-```bash
-python3 scripts/rhetoric.py think "We should use a factory pattern here" --session-id project-123
-```
-
-**Output:**
-```json
-{
-  "status": "success",
-  "thought_id": "th-abc123",
-  "session_id": "project-123",
-  "thought_number": 3,
-  "total_thoughts": 5
-}
-```
-
-**Options:**
-- `--session-id <id>`: Group thoughts into sessions
-- `--revision-of <id>`: Mark as revision of previous thought
-- `--branch-from <id>`: Create a branching thought path
-
-### `deliberate "<question>" [--rounds <n>]`
-Deliberate on a question through internal multi-perspective analysis.
+#### `deliberate "<question>" [--rounds <n>]`
+Deliberate on a question through structured multi-model dialectic.
 
 ```bash
 python3 scripts/rhetoric.py deliberate "Should we use microservices or monolith?" --rounds 3
@@ -61,131 +43,93 @@ python3 scripts/rhetoric.py deliberate "Should we use microservices or monolith?
 **Options:**
 - `--rounds <n>`: Number of deliberation rounds (1-5, default: 2)
 - `--context <text>`: Additional context for deliberation
-- `--debug`: Show internal deliberation details (hidden by default)
+- `--debug`: Show role assignments and internal deliberation details
+- `--allow-single`: Allow single model for development testing
 
-**Note:** Requires at least 2 configured model credentials. Returns clear error if insufficient.
+**Note:** Requires at least 2 configured model credentials.
 
-### `review [--session-id <id>]`
-Review thought history and detect patterns.
-
-```bash
-python3 scripts/rhetoric.py review --session-id project-123
-```
-
-**Output:**
-```json
-{
-  "status": "success",
-  "session_id": "project-123",
-  "thought_count": 15,
-  "patterns": {
-    "revision_rate": 0.2,
-    "branch_count": 2,
-    "detected_issues": ["analysis_paralysis"]
-  },
-  "recommendations": ["Consider narrowing scope", "Make a decision to proceed"]
-}
-```
-
-### `status`
-Get current reasoning session status.
+#### `status`
+Get current system status including available providers and deliberation readiness.
 
 ```bash
 python3 scripts/rhetoric.py status
 ```
 
-**Output:**
-```json
-{
-  "active_sessions": 2,
-  "total_thoughts": 45,
-  "models_available": 3,
-  "deliberation_ready": true,
-  "last_activity": "2024-01-15T10:30:00Z"
-}
+### Toulmin Validation Subsystem
+
+#### `plan "<intent>" [--no-bridge] [--contradict <evidence>...]`
+Decompose a natural-language argument into a Toulmin graph, validate it through four passes, select a delivery strategy, and optionally generate a structural analogy via Mercury.
+
+```bash
+python3 scripts/rhetoric.py plan "PostgreSQL 16 improves performance for most workloads"
+python3 scripts/rhetoric.py plan "Rust is best for all backends" --contradict "Compile times are slow" "Python has larger ecosystem"
+python3 scripts/rhetoric.py plan "Microservices improve reliability" --no-bridge
 ```
 
-## Thought Persistence
+**Requires:** `INCEPTION_API_KEY` environment variable (Mercury API)
 
-Thoughts are persisted with the following schema:
+**Options:**
+- `--no-bridge`: Skip analogy bridge generation
+- `--contradict <evidence>...`: Known contradicting evidence for cross-reference validation
 
-```json
-{
-  "id": "th-abc123",
-  "timestamp": "2024-01-15T10:30:00Z",
-  "session_id": "project-123",
-  "content": "The thought content",
-  "type": "analysis",
-  "revision_of": null
-}
+#### `validate <file>`
+Validate a pre-built Toulmin argument graph from a JSON file. No API needed.
+
+```bash
+python3 scripts/rhetoric.py validate examples/hasty-generalization.json
 ```
 
-Thoughts are stored in `thoughts.json` and retained indefinitely unless explicitly deleted.
+#### `demo`
+Run built-in demonstration cases showcasing the validation engine. No API needed.
 
-## Deliberation
+```bash
+python3 scripts/rhetoric.py demo
+```
 
-The `deliberate` command orchestrates multi-model debate internally:
+Demonstrates detection of: valid induction, hasty generalization, formal fallacies (affirming the consequent), cherry-picking (cross-reference integrity), and surface analogies.
 
-1. **Minimum 2 models** required (validates credentials at startup)
-2. **Maximum 5 rounds** of deliberation
-3. **Convergence detection** when confidence exceeds 0.8
-4. **Model names hidden** from output (opaque interface)
+## Validation Passes
 
-### Required Credentials
+The Toulmin engine runs four deterministic validation passes (no LLM calls):
 
-At least 2 of the following in `.env.local`:
+| Pass | Name | Detects |
+|------|------|---------|
+| 1 | Structural completeness | Missing claim/data/warrant, absent backing/qualifier/rebuttals |
+| 2 | Inferential type validation | Formal fallacies, hasty generalization, false cause, surface analogy |
+| 3 | Cross-reference integrity | Unaddressed contradictions, unused supporting evidence |
+| 4 | Qualifier calibration | Overclaim/underclaim relative to evidence strength |
 
+## Dialectical Roles
+
+Participants are automatically assigned roles in order:
+
+| Position | Role | Function |
+|----------|------|----------|
+| 1st | **Proponent** | Argues in favor of the strongest position |
+| 2nd | **Opponent** | Challenges assumptions, finds weaknesses |
+| 3rd+ | **Synthesizer** | Integrates positions, proposes resolution |
+
+## Required Credentials
+
+**Deliberation** — at least 2 of:
 ```bash
 OPENAI_API_KEY=sk-...
 ANTHROPIC_API_KEY=sk-ant-...
 OPENROUTER_API_KEY=sk-or-...
-GOOGLE_CLOUD_API_KEY=AIza...
+OLLAMA_URL=http://localhost:11434
 ```
 
-### Error Handling
-
-```json
-{"status": "error", "code": 4, "message": "Insufficient models for deliberation. Configure at least 2 of: OPENAI_API_KEY, ANTHROPIC_API_KEY, OPENROUTER_API_KEY"}
-```
-
-## Configuration
-
-### Environment Variables
-
-Set in `.env.local`:
-
+**Toulmin plan** (optional):
 ```bash
-# Primary (at least 2 required for deliberation)
-OPENAI_API_KEY=sk-...
-ANTHROPIC_API_KEY=sk-ant-...
-OPENROUTER_API_KEY=sk-or-...
-GOOGLE_CLOUD_API_KEY=AIza...
-
-# Optional
-TAVILY_API_KEY=tvly-...  # Enhanced search in think
+INCEPTION_API_KEY=...   # Mercury API for decomposition + analogy bridge
 ```
 
-## Files
+## Constitution
 
-- `thoughts.json`: Thought history with full schema
-- `deliberations/`: Deliberation transcripts (session-specific)
-- `constitution.md`: Reasoning rules and guidelines
-- `sessions/`: Session state files
-
-## Backends
-
-Rhetoric orchestrates these MCP servers internally (opaque to user):
-
-- **sequential-thinking**: Structured thought recording
-- **ai-counsel**: Multi-model deliberation
-- **vibe-check**: Pattern detection and risk assessment
-
-Backend details are hidden - you interact only through Rhetoric's unified interface.
+See [constitution.md](constitution.md) for 6 inviolable rules governing both subsystems.
 
 ## Synergies
 
-Rhetoric optionally integrates with other Cognitive Construct skills:
-
-- **→ Encyclopedia**: Fetch context during deliberation
-- **→ Inland Empire**: Store significant decisions as memories
-- **← Volition**: Complex actions can request deliberation first
+- **-> Encyclopedia**: Fetch context during deliberation; provide contradicting/supporting evidence for validation Pass 3
+- **-> Inland Empire**: Store significant decisions as memories
+- **<- Volition**: Complex actions can request deliberation or validation first

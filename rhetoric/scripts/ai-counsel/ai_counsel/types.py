@@ -42,8 +42,9 @@ class Participant:
     Specifies which HTTP adapter and model to use for this participant.
     """
 
-    adapter: Literal["ollama", "lmstudio", "openrouter"]
+    adapter: Literal["ollama", "lmstudio", "openrouter", "openai", "anthropic"]
     model: str
+    role: Literal["proponent", "opponent", "synthesizer"] = "proponent"
 
 
 @dataclass(frozen=True, slots=True)

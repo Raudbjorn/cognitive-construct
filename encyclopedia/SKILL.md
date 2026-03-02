@@ -191,7 +191,7 @@ Encyclopedia classifies queries and routes to appropriate sources:
 1. Explicit type hint: `"doc: React"` or `"code: auth.py"` override routing.
 2. Repository hints: `repo:owner/name` automatically trigger `code_context`.
 3. Pattern matching: URLs → general_search; `def/class/function` → code_context.
-4. Keyword triggers: `"latest"`, `"current"`, `"2024"` → general_search.
+4. Keyword triggers: `"latest"`, `"current"`, any 4-digit year → general_search.
 5. Default: library_docs.
 
 ## Configuration
@@ -240,7 +240,7 @@ KAGI_CLI=kagi                 # kagi search/summarize commands
 PERPLEXITY_CLI=perplexity     # perplexity query command
 SEARXNG_CLI=searxng           # searxng search command
 GIT_INGEST_CLI=mcp-git-ingest # mcp-git-ingest tree/read commands
-CGC_CLI=cgc                   # cgc find/analyze commands
+CGC_CLI=cgcli                 # cgcli find/analyze commands
 ```
 
 Note: if `exa` on your machine is the `ls` replacement (often at `/usr/bin/exa`), install `exa-mcp-server` and/or set `EXA_CLI=exa-mcp-server`.
@@ -300,7 +300,7 @@ Synergies are enabled by default and controlled by feature flags in `shared/feat
 
 ## Constitution
 
-Encyclopedia's 7 inviolable rules are defined in `encyclopedia/constitution.md`:
+Encyclopedia's 7 inviolable rules are defined in `constitution.md`:
 
 1. NEVER fabricate search results
 2. NEVER suppress contradicting evidence
@@ -316,6 +316,8 @@ Encyclopedia's 7 inviolable rules are defined in `encyclopedia/constitution.md`:
 - `scripts/source_health.py`: Circuit breaker and health registry
 - `scripts/semantic_cache.py`: Embedding similarity cache with LRU eviction
 - `scripts/source_profiler.py`: Rolling window metrics and adaptive weights
+- `scripts/cgcli/`: Vendored code graph client (SurrealDB)
+- `scripts/anime-mori/`: Vendored persistent codebase intelligence (TS+Rust)
 - `constitution.md`: Inviolable rules governing the knowledge substrate
 - `SPEC.md`: Technical specification (design rationale and phase details)
 - `~/.encyclopedia/cache/semantic_cache.jsonl`: Persisted cache entries

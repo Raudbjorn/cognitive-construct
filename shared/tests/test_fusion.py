@@ -128,6 +128,8 @@ class TestFiltering:
     def test_min_score_filter(self, strict_engine: RRFEngine) -> None:
         items = _ranked([_item(f"item_{i}") for i in range(50)], "exa")
         results = strict_engine.fuse([(1.0, items)], key_fn=lambda x: x["url"])
+        # Filtering should have removed some items
+        assert len(results) < len(items)
         # All surviving results should meet the threshold
         for r in results:
             assert r.score >= strict_engine.config.min_score

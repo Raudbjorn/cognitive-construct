@@ -146,8 +146,6 @@ class GitIngestClient:
             files = client.read_files(repo.local_path, ["README.md", "src/main.py"])
     """
 
-    cache_dir: str | None = None
-
     def clone(self, repo_url: str) -> Result[RepoInfo, GitIngestError]:
         """Clone a repository."""
         return clone_repo(repo_url)

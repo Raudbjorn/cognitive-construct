@@ -11,6 +11,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import re
 import sys
@@ -24,6 +25,8 @@ from typing import Any, Awaitable
 sys.path.insert(0, str(Path(__file__).parent))
 # Import shared utilities from project root
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+logger = logging.getLogger(__name__)
 
 from context7client import Context7Client
 from exaclient import ExaClient, WebSearchOptions, CodeSearchOptions
@@ -912,7 +915,7 @@ async def _fulltext_search(client: Any, search_term: str, limit: int = 20) -> li
                 "fulltext_score": rec.get("score") or 0.0,
             })
     except Exception:
-        pass
+        logger.debug("Fulltext search failed for %r", search_term, exc_info=True)
     return hits
 
 
@@ -936,6 +939,7 @@ async def _vector_search(client: Any, query: str, limit: int = 20) -> list[dict]
             })
         return hits
     except Exception:
+        logger.debug("Vector search failed for %r", query, exc_info=True)
         return []
 
 

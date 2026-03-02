@@ -30,6 +30,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Generic, TypeVar, Union
 
+__all__ = ["Result", "Ok", "Err"]
+
 T = TypeVar("T")
 E = TypeVar("E")
 U = TypeVar("U")

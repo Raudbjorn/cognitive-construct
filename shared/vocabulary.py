@@ -120,11 +120,10 @@ class Vocabulary:
         try:
             with open(path) as f:
                 data: dict[str, Any] = json.load(f)
-        except (OSError, json.JSONDecodeError) as exc:
-            logger.error(
-                "Failed to load vocabulary from %s: %s",
+        except (OSError, json.JSONDecodeError):
+            logger.exception(
+                "Failed to load vocabulary from %s",
                 path,
-                exc,
             )
             return cls()
 
@@ -288,12 +287,12 @@ class Vocabulary:
         best_match: str | None = None
         best_dist = max_dist + 1
 
-        for known in self._known_terms:
+        for known in sorted(self._known_terms):
             # Quick length filter
             if abs(len(known) - len(lower)) > max_dist:
                 continue
-            dist = _levenshtein(lower, known)
-            if dist <= max_dist and dist < best_dist:
+            dist = levenshtein(lower, known)
+            if dist < best_dist or (dist == best_dist and (best_match is None or known < best_match)):
                 best_dist = dist
                 best_match = known
 
@@ -353,7 +352,7 @@ def _is_inflection_of_known(word: str, known: set[str]) -> bool:
 # Edit distance (pure Python, no external dependency)
 # ------------------------------------------------------------------
 
-def _levenshtein(a: str, b: str) -> int:
+def levenshtein(a: str, b: str) -> int:
     """Compute Levenshtein edit distance between two strings."""
     if not a:
         return len(b)

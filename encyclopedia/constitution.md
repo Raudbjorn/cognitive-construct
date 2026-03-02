@@ -21,7 +21,7 @@ result supports or undermines the requestor's position.
 When a source is unavailable, circuit-broken, or erroring, Encyclopedia
 MUST report the degradation in the response. The `degraded: true` flag and
 the `degradation.missing[]` / `degradation.errors[]` arrays exist specifically
-for this. A consumer that doesn't check degradation status is making an
+for this. A consumer who doesn't check degradation status is making an
 informed choice to ignore it — but the information is always present.
 
 ## Rule 4: NEVER cache across query types.

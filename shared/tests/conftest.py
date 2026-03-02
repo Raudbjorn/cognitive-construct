@@ -38,6 +38,10 @@ for mod_name in _MODULES_TO_PRELOAD:
     if spec and spec.loader:
         mod = importlib.util.module_from_spec(spec)
         sys.modules[full_name] = mod
-        spec.loader.exec_module(mod)
+        try:
+            spec.loader.exec_module(mod)
+        except Exception:
+            del sys.modules[full_name]
+            raise
         # Also set as attribute on the package
         setattr(sys.modules["shared"], mod_name, mod)

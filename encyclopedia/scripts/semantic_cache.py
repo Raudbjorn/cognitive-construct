@@ -331,7 +331,7 @@ class SemanticCache:
                     payload={"query": query, "hit_count": hit_count},
                 )
         except Exception:
-            pass
+            logger.debug("Failed to emit ENCYCLOPEDIA_CACHE_HIT for query=%r", query, exc_info=True)
 
     def _emit_miss(self, query: str) -> None:
         if not _HAS_EVENTS:
@@ -345,4 +345,4 @@ class SemanticCache:
                     payload={"query": query},
                 )
         except Exception:
-            pass
+            logger.debug("Failed to emit ENCYCLOPEDIA_CACHE_MISS for query=%r", query, exc_info=True)

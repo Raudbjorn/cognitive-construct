@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from shared.vocabulary import Vocabulary, ExpandedQuery, Correction, _levenshtein
+from shared.vocabulary import Vocabulary, ExpandedQuery, Correction, levenshtein
 
 
 # ------------------------------------------------------------------
@@ -226,21 +226,21 @@ class TestLoading:
 
 class TestLevenshtein:
     def test_identical(self) -> None:
-        assert _levenshtein("hello", "hello") == 0
+        assert levenshtein("hello", "hello") == 0
 
     def test_one_insertion(self) -> None:
-        assert _levenshtein("hello", "helloo") == 1
+        assert levenshtein("hello", "helloo") == 1
 
     def test_one_deletion(self) -> None:
-        assert _levenshtein("hello", "hell") == 1
+        assert levenshtein("hello", "hell") == 1
 
     def test_one_substitution(self) -> None:
-        assert _levenshtein("hello", "hallo") == 1
+        assert levenshtein("hello", "hallo") == 1
 
     def test_empty_strings(self) -> None:
-        assert _levenshtein("", "") == 0
-        assert _levenshtein("abc", "") == 3
-        assert _levenshtein("", "abc") == 3
+        assert levenshtein("", "") == 0
+        assert levenshtein("abc", "") == 3
+        assert levenshtein("", "abc") == 3
 
     def test_completely_different(self) -> None:
-        assert _levenshtein("abc", "xyz") == 3
+        assert levenshtein("abc", "xyz") == 3

@@ -233,7 +233,7 @@ class QueryPipeline:
             query_type = "general_search"
 
         # 6. Generate suggestions
-        suggestions = self._generate_suggestions(corrected, expanded)
+        suggestions = self._generate_suggestions(expanded)
 
         return ProcessedQuery(
             original=raw_query,
@@ -280,7 +280,6 @@ class QueryPipeline:
 
     def _generate_suggestions(
         self,
-        corrected: str,
         expanded: ExpandedQuery,
     ) -> list[str]:
         """Generate search tips based on expansion results."""
@@ -362,8 +361,8 @@ def _quick_distance(a: str, b: str) -> int:
     Uses the same Levenshtein from vocabulary module but imported
     to avoid exposing private functions.
     """
-    from .vocabulary import _levenshtein
-    return _levenshtein(a.lower(), b.lower())
+    from .vocabulary import levenshtein
+    return levenshtein(a.lower(), b.lower())
 
 
 def _empty_result(raw: str) -> ProcessedQuery:

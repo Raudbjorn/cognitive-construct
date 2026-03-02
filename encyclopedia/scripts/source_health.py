@@ -281,7 +281,7 @@ class HealthRegistry:
                 )
                 logger.info("Source %s circuit-broken", source)
         except Exception:
-            pass
+            logger.debug("Failed to emit ENCYCLOPEDIA_SOURCE_DEGRADED for %s", source, exc_info=True)
 
     def _emit_restored(self, source: str) -> None:
         """Emit ENCYCLOPEDIA_SOURCE_RESTORED event (fire-and-forget)."""
@@ -297,4 +297,4 @@ class HealthRegistry:
                 )
                 logger.info("Source %s restored", source)
         except Exception:
-            pass
+            logger.debug("Failed to emit ENCYCLOPEDIA_SOURCE_RESTORED for %s", source, exc_info=True)

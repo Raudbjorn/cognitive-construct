@@ -189,7 +189,7 @@ class TestProfileReport:
     @patch("source_profiler._HAS_FLAGS", True)
     @patch("source_profiler.get_flag", return_value=False)
     @patch("source_profiler.get_source_weights", return_value={"exa": 0.4, "context7": 0.6})
-    def test_profile_report(self, mock_weights, mock_flag):
+    def test_profile_report(self, _mock_weights, _mock_flag):
         p = SourceProfiler()
         p.record("exa", "library_docs", result_count=3)
         report = p.get_profile("library_docs")

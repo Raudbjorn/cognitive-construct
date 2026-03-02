@@ -1,0 +1,27 @@
+{
+  "name": "anime-mori-core",
+  "version": "0.6.0",
+  "description": "Rust core for Anime Mori",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "napi": {
+    "binaryName": "anime-mori-core",
+    "targets": [
+      "x86_64-pc-windows-msvc",
+      "x86_64-unknown-linux-gnu",
+      "x86_64-apple-darwin",
+      "aarch64-apple-darwin"
+    ]
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@napi-rs/cli": "^2.16.0"
+  },
+  "engines": {
+    "node": ">= 10"
+  },
+  "scripts": {
+    "build": "napi build --platform --release --features napi-bindings",
+    "build:debug": "napi build --platform --features napi-bindings"
+  }
+}

@@ -144,8 +144,8 @@ encyclopedia/
     ├── kagiclient/       # Kagi client
     ├── searxng/          # SearXNG client
     ├── gitingest/        # Git ingest client
-    ├── codegraph/        # CodeGraph client
-    └── inmemoria/        # In-memory storage
+    ├── cgcli/            # Code graph client (SurrealDB)
+    └── anime-mori/       # Persistent codebase intelligence (TS+Rust)
 ```
 
 ## Dependencies

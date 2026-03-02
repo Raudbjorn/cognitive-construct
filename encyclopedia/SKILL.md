@@ -1,9 +1,9 @@
 ---
 name: encyclopedia
-description: Knowledge retrieval from multiple sources. Search docs, web, and code with intelligent routing.
+description: Knowledge retrieval from multiple sources. Search docs, web, and code with intelligent routing, RRF fusion, circuit breakers, and semantic caching.
 license: MIT
 metadata:
-  version: 2.1.0
+  version: 3.0.0
   dependencies: python>=3.10
 ---
 
@@ -15,20 +15,33 @@ metadata:
 
 **Encyclopedia** is the knowledge skill of the Cognitive Construct. It aggregates multiple information sources into a unified, reliable interface: library documentation via Context7, web search via Exa, Perplexity, and (optionally) Kagi, code analysis via repository inspection, and optional advanced sources like SearXNG and CodeGraphContext.
 
-The skill automatically routes queries to the most appropriate source, merges results, deduplicates using semantic similarity, and ranks by relevance. All backend queries are executed via CLI tools, keeping the interface simple and composable.
+The retrieval pipeline processes every query through six phases:
+
+1. **Query Preprocessing** — spelling correction, synonym expansion, per-backend query adaptation
+2. **RRF Fusion** — Reciprocal Rank Fusion treats cross-source agreement as signal, not noise
+3. **Source Health** — circuit breakers track per-source failures with automatic recovery probing
+4. **Semantic Cache** — embedding similarity avoids redundant queries for near-duplicate inputs
+5. **Source Profiling** — rolling window metrics enable adaptive weight adjustment per source
+6. **Integration** — verbose diagnostics, dry-run mode, and inter-skill synergies
+
+Each phase degrades gracefully via import guards — if a dependency is missing, the phase is skipped and the pipeline continues with reduced capability.
 
 ## Commands
 
 ### `search "<query>"`
-Perform a general knowledge search across all available sources. Include `repo:owner/name` anywhere in the query to automatically pull repository context from `mcp-git-ingest` (and CodeGraphContext when enabled).
+Perform a knowledge search across all available sources. Include `repo:owner/name` anywhere in the query to automatically pull repository context from `mcp-git-ingest` (and CodeGraphContext when enabled).
 
 ```bash
 python3 scripts/encyclopedia.py search "repo:anthropics/anthology describe auth middleware"
+python3 scripts/encyclopedia.py search "kubernetes auth middleware" --verbose
+python3 scripts/encyclopedia.py search "k8s auth" --dry-run
 ```
 
 **Options:**
 - `--sources <list>`: Comma-separated list of sources to query (context7, exa, perplexity, kagi, searxng, codegraph, mcp_git_ingest)
 - `--limit <n>`: Maximum results to return (default: 5)
+- `--verbose`: Show query analysis, source routing, fusion breakdown, cache status, and health diagnostics
+- `--dry-run`: Show preprocessing and routing decisions without executing queries
 
 **Output:**
 ```json
@@ -37,7 +50,46 @@ python3 scripts/encyclopedia.py search "repo:anthropics/anthology describe auth 
   "results": [...],
   "sources_used": ["context7", "exa", "mcp_git_ingest"],
   "degraded": false,
-  "degradation": {"missing": [], "errors": []}
+  "degradation": {"missing": [], "errors": []},
+  "cached": false
+}
+```
+
+When `--verbose` is enabled, the response includes additional diagnostics:
+
+```json
+{
+  "verbose": {
+    "query_analysis": {
+      "raw_query": "k8s auth middleware",
+      "classified_type": "library_docs",
+      "corrections": ["k8s → kubernetes"],
+      "expansions": [["auth", "authentication", "authorization"]]
+    },
+    "source_routing": {
+      "target_sources": ["context7", "exa"],
+      "health_filtered": [],
+      "fallback_used": false
+    },
+    "fusion": {
+      "weights": {"context7": 0.52, "exa": 0.48},
+      "per_source_results": {"context7": 3, "exa": 4}
+    },
+    "cache": {"status": "miss"},
+    "profiler": {"adaptive_enabled": false}
+  }
+}
+```
+
+When `--dry-run` is enabled, the pipeline stops after preprocessing and routing — no queries are dispatched:
+
+```json
+{
+  "status": "dry_run",
+  "query_analysis": {...},
+  "target_sources": ["context7", "exa"],
+  "source_health": {"context7": "healthy", "exa": "healthy"},
+  "cache_status": "miss"
 }
 ```
 
@@ -71,6 +123,77 @@ python3 scripts/encyclopedia.py code "github.com/owner/repo" "how does authentic
 {"status": "success", "repository": "owner/repo", "analysis": "..."}
 ```
 
+## Architecture
+
+### Query Preprocessing (Phase 1)
+
+Raw queries are transformed before dispatch:
+
+1. **Spelling correction** via domain vocabulary (e.g., "kubernets" → "kubernetes")
+2. **Synonym expansion** for keyword backends (e.g., "auth" → ["auth", "authentication", "authorization"])
+3. **Per-backend adaptation** — Context7 gets library-scoped queries, Exa gets keyword-rich queries, Perplexity gets natural-language questions
+
+Synonym expansion is additive: it never removes or replaces the original query terms (Constitution Rule 7).
+
+### RRF Fusion (Phase 2)
+
+When multiple sources return results, Reciprocal Rank Fusion merges them:
+
+1. **Parallel query** with 5-second timeout per source
+2. **RRF scoring** — cross-source agreement boosts results (unlike priority dedup which destroyed agreement signal)
+3. **Source weights** — per-query-type weights from `shared.fusion.get_source_weights()`
+4. **Metadata** — `fused_from` lists all contributing sources for each result (Constitution Rule 5)
+
+### Source Health Monitor (Phase 3)
+
+Circuit breakers track per-source reliability:
+
+- **3 consecutive failures** → circuit opens (source skipped)
+- **60-second cooldown** → probe mode (one test query)
+- **Probe success** → healthy; **Probe failure** → circuit re-opens
+- Events emitted: `ENCYCLOPEDIA_SOURCE_DEGRADED`, `ENCYCLOPEDIA_SOURCE_RESTORED`
+
+When all primary sources for a query type are circuit-broken, **cross-type fallback routing** attempts sources from adjacent types (e.g., `library_docs` falls back to general search sources).
+
+### Semantic Cache (Phase 4)
+
+Near-duplicate queries hit the cache instead of re-querying backends:
+
+- **Similarity threshold:** 0.92 (configurable via `ENCYCLOPEDIA_CACHE_THRESHOLD`)
+- **TTL:** 1 hour (configurable via `ENCYCLOPEDIA_CACHE_TTL`)
+- **Max entries:** 500 with LRU eviction
+- **Query-type isolation:** a `library_docs` cache entry is never returned for a `general_search` query (Constitution Rule 4)
+- **Persistence:** entries saved as JSONL to `~/.encyclopedia/cache/semantic_cache.jsonl`
+
+### Source Quality Profiling (Phase 5)
+
+Rolling window metrics (last 200 queries per source) track performance:
+
+- **Signals:** result count, latency, fusion rank, timeout rate, empty rate, feedback score
+- **Weight adjustment:** ±5% per profiling window, capped at ±20% total drift
+- **Cold start:** static weights until 50+ samples per source
+- **Feature flag:** `ENCYCLOPEDIA_ADAPTIVE_WEIGHTS` (default: disabled)
+
+When enabled, the profiler adjusts fusion weights based on measured performance. When disabled, metrics are still recorded for observability but weights remain static.
+
+## Source Routing
+
+Encyclopedia classifies queries and routes to appropriate sources:
+
+| Query Type | Primary Sources | Fallback Sources |
+|------------|-----------------|------------------|
+| `library_docs` | context7 | exa, perplexity |
+| `general_search` | exa, perplexity | kagi (flagged), searxng |
+| `code_context` | mcp-git-ingest (requires `repo:` hint) | exa, context7, CodeGraphContext (optional) |
+| `repository` | mcp-git-ingest | exa |
+
+**Classification Strategy:**
+1. Explicit type hint: `"doc: React"` or `"code: auth.py"` override routing.
+2. Repository hints: `repo:owner/name` automatically trigger `code_context`.
+3. Pattern matching: URLs → general_search; `def/class/function` → code_context.
+4. Keyword triggers: `"latest"`, `"current"`, any 4-digit year → general_search.
+5. Default: library_docs.
+
 ## Configuration
 
 ### Required Environment Variables
@@ -86,15 +209,24 @@ PERPLEXITY_API_KEY=...    # Perplexity AI search
 CONTEXT7_API_KEY=...      # Higher rate limits for library docs
 KAGI_API_KEY=...          # Kagi search (closed beta)
 SEARXNG_URL=...           # Self-hosted SearXNG instance
-NEO4J_URI=...             # CodeGraphContext (requires Neo4j)
-NEO4J_USERNAME=...
-NEO4J_PASSWORD=...
+CGCLI_DB_URL=...          # cgcli SurrealDB (default: surrealkv://~/.local/share/cgcli/codegraph)
+```
 
-# Feature flags (default state shown)
-ENCYCLOPEDIA_ENABLE_CONTEXT7=true
-ENCYCLOPEDIA_ENABLE_KAGI=false
-ENCYCLOPEDIA_ENABLE_SEARXNG=false
-ENCYCLOPEDIA_ENABLE_CODEGRAPH=false
+### Feature Flags
+
+```bash
+# Search providers (via ENCYCLOPEDIA_ENABLE_<NAME>=1)
+ENCYCLOPEDIA_ENABLE_CONTEXT7=1     # Context7 library docs (default: on)
+ENCYCLOPEDIA_ENABLE_KAGI=0         # Kagi search (default: off)
+ENCYCLOPEDIA_ENABLE_SEARXNG=0      # SearXNG (default: off)
+ENCYCLOPEDIA_ENABLE_CODEGRAPH=0    # SurrealDB code graph (default: off)
+
+# Adaptive features
+ENCYCLOPEDIA_ADAPTIVE_WEIGHTS=0    # Source quality profiling (default: off)
+
+# Cache tuning (direct env vars, not feature flags)
+ENCYCLOPEDIA_CACHE_THRESHOLD=0.92  # Cosine similarity threshold for cache hits
+ENCYCLOPEDIA_CACHE_TTL=3600        # Cache entry TTL in seconds
 ```
 
 ### CLI Tool Paths
@@ -108,7 +240,7 @@ KAGI_CLI=kagi                 # kagi search/summarize commands
 PERPLEXITY_CLI=perplexity     # perplexity query command
 SEARXNG_CLI=searxng           # searxng search command
 GIT_INGEST_CLI=mcp-git-ingest # mcp-git-ingest tree/read commands
-CGC_CLI=cgc                   # cgc find/analyze commands
+CGC_CLI=cgcli                 # cgcli find/analyze commands
 ```
 
 Note: if `exa` on your machine is the `ls` replacement (often at `/usr/bin/exa`), install `exa-mcp-server` and/or set `EXA_CLI=exa-mcp-server`.
@@ -119,72 +251,29 @@ Encyclopedia validates credentials at startup and returns clear errors:
 - Missing: `"EXA_API_KEY not found"`
 - CLI not found: `"cli_not_found"`
 
-## Source Routing
+## Graceful Degradation
 
-Encyclopedia classifies queries and routes to appropriate sources:
+The degradation hierarchy (Constitution Rule 6):
 
-| Query Type | Primary Sources | Fallback Sources |
-|------------|-----------------|------------------|
-| `library_docs` | context7 | exa |
-| `general_search` | exa, perplexity | kagi (flagged), searxng |
-| `code_context` | mcp-git-ingest (requires `repo:` hint) | exa, CodeGraphContext (optional) |
-
-**Classification Strategy:**
-1. Explicit type hint: `"doc: React"` or `"code: auth.py"` override routing.
-2. Repository hints: `repo:owner/name` automatically trigger `code_context`.
-3. Pattern matching: URLs → general_search; `def/class/function` → code_context.
-4. Keyword triggers: `"latest"`, `"current"`, `"2024"` → general_search.
-5. Default: library_docs.
-
-## Result Merging
-
-When multiple sources return results:
-
-1. **Parallel query** with 5-second timeout per source
-2. **Semantic deduplication**: similarity > 0.85 → merge, keeping higher-priority source
-3. **Ranking**: by relevance score, then recency
-4. **Source priority**: context7 > exa > perplexity > kagi > searxng
-
-### Graceful Degradation Metadata
-
-When any required provider is disabled via feature flag, missing credentials, or returns an error, the CLI reports:
-
-- `degraded (bool)`: `true` if the request fell back to a reduced capability.
-- `degradation.missing`: structured entries `{source, reason, optional}` describing skipped providers.
-- `degradation.errors`: runtime failures (timeouts, HTTP errors) with optionality indicators.
-
-This metadata makes it clear when optional backends (Kagi, SearXNG, CodeGraphContext) were unavailable and why, without exposing raw stack traces.
-
-## Backend CLI Tools
-
-Encyclopedia invokes these CLI tools for backend queries:
-
-| Backend | CLI Command | Example |
-|---------|-------------|---------|
-| **Context7** | `context7 resolve <query> --json` | `context7 resolve "react hooks" --json` |
-| **Exa** | `exa search <query> --json` | `exa search "python async" --json -n 5` |
-| **Perplexity** | `perplexity -p <query>` | `perplexity -p "explain kubernetes"` |
-| **Kagi** | `kagi search <query> --json` | `kagi --json search "rust vs go"` |
-| **SearXNG** | `searxng search <query> --json` | `searxng search "linux kernel" --json` |
-| **mcp-git-ingest** | `mcp-git-ingest tree <repo>` | `mcp-git-ingest tree https://github.com/owner/repo` |
-| **CodeGraphContext** | `cgc find <query> --json` | `cgc find "authenticate" --json` |
-
-All tools should be installed and available in PATH. Install via:
-
-```bash
-# Python tools (via uv)
-uv tool install context7
-uv tool install exa-mcp-server
-uv tool install kagi
-uv tool install perplexity
-uv tool install searxng
-uv tool install mcp-git-ingest
-uv tool install codegraphcontext
-
-# Or via npm for TypeScript tools
-npm install -g @upstash/context7-mcp
-npm install -g exa-mcp-server
+```text
+preprocessed query + RRF fusion
+  → preprocessed query + priority dedup
+    → raw query + priority dedup
+      → raw query + single source
+        → error
 ```
+
+Each fallback layer loses quality but preserves availability.
+
+### Degradation Metadata
+
+When any provider is unavailable, the CLI reports:
+
+- `degraded (bool)`: `true` if the request fell back to reduced capability
+- `degradation.missing`: structured entries `{source, reason, optional}` describing skipped providers
+- `degradation.errors`: runtime failures (timeouts, HTTP errors) with optionality indicators
+
+This metadata makes it clear when optional backends were unavailable and why.
 
 ## Error Handling
 
@@ -202,15 +291,34 @@ Error codes:
 
 ## Synergies
 
-Encyclopedia optionally integrates with other Cognitive Construct skills:
+Encyclopedia integrates with other Cognitive Construct skills via the synergy bus:
 
-- **→ Inland Empire**: Frequently accessed topics are cached as memories
-- **← Rhetoric**: Deliberation can fetch relevant documentation context
+- **→ Inland Empire**: Frequently accessed topics are cached as memories (`ENCYCLOPEDIA_CACHE_SYNERGY`)
+- **← Rhetoric**: Deliberation requests documentation context via `rhetoric_request_context()` (`RHETORIC_ENCYCLOPEDIA_SYNERGY`)
 
-Enable synergies via `--synergy` flag or `ENCYCLOPEDIA_SYNERGY=true` environment variable.
+Synergies are enabled by default and controlled by feature flags in `shared/feature_flags.py`.
+
+## Constitution
+
+Encyclopedia's 7 inviolable rules are defined in `constitution.md`:
+
+1. NEVER fabricate search results
+2. NEVER suppress contradicting evidence
+3. NEVER silently degrade quality
+4. NEVER cache across query types
+5. ALWAYS attribute sources
+6. ALWAYS prefer graceful degradation over failure
+7. NEVER let vocabulary expansion alter meaning
 
 ## Files
 
-- `~/.encyclopedia/cache/`: Response cache (TTL: 1 hour)
+- `scripts/encyclopedia.py`: Main orchestrator (query pipeline, fusion, dispatch)
+- `scripts/source_health.py`: Circuit breaker and health registry
+- `scripts/semantic_cache.py`: Embedding similarity cache with LRU eviction
+- `scripts/source_profiler.py`: Rolling window metrics and adaptive weights
+- `scripts/cgcli/`: Vendored code graph client (SurrealDB)
+- `scripts/anime-mori/`: Vendored persistent codebase intelligence (TS+Rust)
+- `constitution.md`: Inviolable rules governing the knowledge substrate
+- `SPEC.md`: Technical specification (design rationale and phase details)
+- `~/.encyclopedia/cache/semantic_cache.jsonl`: Persisted cache entries
 - `~/.encyclopedia/sessions/`: Query session history
-- `resources/source_config.json`: Source priority and routing rules

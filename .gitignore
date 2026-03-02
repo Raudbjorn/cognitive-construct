@@ -15,6 +15,18 @@ venv/
 .mypy_cache/
 .pytest_cache/
 
+# Node.js (anime-mori)
+node_modules/
+dist/
+*.node
+
+# Rust (anime-mori/rust-core)
+target/
+Cargo.lock
+
+# SurrealDB data files
+*.surql
+
 # Data files (generated at runtime)
 *.db
 *.sqlite

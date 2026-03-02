@@ -1,7 +1,7 @@
 """Type definitions for Exa AI API."""
 
 from __future__ import annotations
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
@@ -18,19 +18,6 @@ class LivecrawlMode(str, Enum):
     FALLBACK = "fallback"
     PREFERRED = "preferred"
     ALWAYS = "always"
-
-
-class DeepResearchModel(str, Enum):
-    """Deep research model options."""
-    RESEARCH = "exa-research"
-    RESEARCH_PRO = "exa-research-pro"
-
-
-class DeepResearchStatus(str, Enum):
-    """Deep research task status."""
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
 
 
 # Request options
@@ -108,60 +95,3 @@ class CodeSearchResult:
     """Result of a code search operation."""
     content: str
     response: ExaCodeResponse
-
-
-# Deep Research types
-@dataclass(frozen=True, slots=True)
-class DeepResearchRequest:
-    """Request for deep research."""
-    instructions: str
-    model: DeepResearchModel = DeepResearchModel.RESEARCH
-    infer_schema: bool = False
-
-
-@dataclass(slots=True)
-class ResearchCitation:
-    """Citation from research."""
-    id: str
-    url: str
-    title: str
-    snippet: str
-
-
-@dataclass(slots=True)
-class ResearchOperation:
-    """Operation performed during research."""
-    type: str
-    step_id: str
-    text: str | None = None
-    query: str | None = None
-    goal: str | None = None
-    url: str | None = None
-    thought: str | None = None
-    results: list[Any] = field(default_factory=list)
-    data: Any | None = None
-
-
-@dataclass(slots=True)
-class ResearchCost:
-    """Cost breakdown for research."""
-    total: float
-    searches: float
-    pages: float
-    reasoning_tokens: float
-
-
-@dataclass(slots=True)
-class DeepResearchResponse:
-    """Response from deep research API."""
-    id: str
-    status: DeepResearchStatus
-    instructions: str
-    created_at: int = 0
-    data: dict[str, Any] | None = None
-    operations: list[ResearchOperation] = field(default_factory=list)
-    citations: dict[str, list[ResearchCitation]] = field(default_factory=dict)
-    time_ms: int | None = None
-    model: str | None = None
-    cost: ResearchCost | None = None
-    schema: dict[str, Any] | None = None

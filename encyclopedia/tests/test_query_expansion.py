@@ -97,7 +97,7 @@ class TestSynonymMaps:
 class TestExpandCodegraphQuery:
     def test_synonym_expansion(self):
         result = expand_codegraph_query("authentication")
-        terms = set(result.split(" OR "))
+        terms = set(result.split())
         # Should include the "auth" family
         assert "auth" in terms
         assert "login" in terms
@@ -105,7 +105,7 @@ class TestExpandCodegraphQuery:
 
     def test_identifier_splitting(self):
         result = expand_codegraph_query("getUserData")
-        terms = set(result.split(" OR "))
+        terms = set(result.split())
         assert "get" in terms
         assert "user" in terms
         assert "data" in terms
@@ -113,14 +113,14 @@ class TestExpandCodegraphQuery:
     def test_identifier_split_triggers_synonyms(self):
         """Splitting getUserData should expand 'get' to fetch/retrieve/etc."""
         result = expand_codegraph_query("getUserData")
-        terms = set(result.split(" OR "))
+        terms = set(result.split())
         assert "fetch" in terms
         assert "retrieve" in terms
 
     def test_user_synonym_expansion(self):
         """'user' token should expand to account/profile/member."""
         result = expand_codegraph_query("getUserData")
-        terms = set(result.split(" OR "))
+        terms = set(result.split())
         assert "account" in terms
         assert "profile" in terms
 
@@ -132,16 +132,17 @@ class TestExpandCodegraphQuery:
     def test_deduplication(self):
         """Repeated terms should not appear twice in output."""
         result = expand_codegraph_query("auth authentication")
-        terms = result.split(" OR ")
+        terms = result.split()
         assert len(terms) == len(set(terms))
 
-    def test_output_format_or_joined(self):
+    def test_output_format_space_separated(self):
         result = expand_codegraph_query("delete")
-        assert " OR " in result
+        terms = result.split()
+        assert len(terms) > 1  # expanded beyond original
 
     def test_output_sorted(self):
         result = expand_codegraph_query("delete")
-        terms = result.split(" OR ")
+        terms = result.split()
         assert terms == sorted(terms)
 
     def test_empty_query(self):
@@ -150,7 +151,7 @@ class TestExpandCodegraphQuery:
 
     def test_snake_case_query(self):
         result = expand_codegraph_query("verify_credentials")
-        terms = set(result.split(" OR "))
+        terms = set(result.split())
         assert "verify" in terms
         assert "credentials" in terms
         # verify is a synonym of validate family
@@ -158,7 +159,7 @@ class TestExpandCodegraphQuery:
 
     def test_multiple_words(self):
         result = expand_codegraph_query("create database")
-        terms = set(result.split(" OR "))
+        terms = set(result.split())
         # From "create" family
         assert "create" in terms
         assert "build" in terms
@@ -171,12 +172,12 @@ class TestExpandCodegraphQuery:
     def test_original_term_preserved(self):
         """The original token should always be in the output."""
         result = expand_codegraph_query("config")
-        terms = set(result.split(" OR "))
+        terms = set(result.split())
         assert "config" in terms
 
     def test_additive_only(self):
         """Expansion should never remove the original query tokens."""
         original_tokens = {"delete"}
         result = expand_codegraph_query("delete")
-        terms = set(result.split(" OR "))
+        terms = set(result.split())
         assert original_tokens.issubset(terms)

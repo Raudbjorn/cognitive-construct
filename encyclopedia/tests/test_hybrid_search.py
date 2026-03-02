@@ -1,21 +1,22 @@
 """Tests for hybrid search: merge/dedup, rerank, fulltext/vector helpers."""
 from __future__ import annotations
 
+import asyncio
 import importlib
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-# Register codegraph.embeddings directly to avoid tree-sitter dependency
-_embeddings_path = Path(__file__).parent.parent / "scripts" / "codegraph" / "embeddings.py"
-_spec = importlib.util.spec_from_file_location("codegraph.embeddings", _embeddings_path)
+# Register cgcli.embeddings directly to avoid tree-sitter dependency
+_embeddings_path = Path(__file__).parent.parent / "scripts" / "cgcli" / "embeddings.py"
+_spec = importlib.util.spec_from_file_location("cgcli.embeddings", _embeddings_path)
 _emb_mod = importlib.util.module_from_spec(_spec)
-sys.modules.setdefault("codegraph", type(sys)("codegraph"))
-sys.modules["codegraph.embeddings"] = _emb_mod
+sys.modules.setdefault("cgcli", type(sys)("cgcli"))
+sys.modules["cgcli.embeddings"] = _emb_mod
 _spec.loader.exec_module(_emb_mod)
 
 # Make scripts/ importable
@@ -216,95 +217,120 @@ class TestRerankCandidates:
 
 
 # ---------------------------------------------------------------------------
-# _fulltext_search (mocked Neo4j driver)
+# _fulltext_search (mocked cgcli db_manager)
 # ---------------------------------------------------------------------------
 
 
 class TestFulltextSearch:
-    def test_returns_hits(self):
-        mock_record = {
-            "type": "Function",
-            "name": "login",
-            "path": "auth.py",
-            "line": 10,
-            "source": "def login(): ...",
-            "docstring": "Login fn.",
-            "score": 5.0,
-        }
-        mock_session = MagicMock()
-        mock_session.run.return_value = [mock_record]
-        mock_driver = MagicMock()
-        mock_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
-        mock_driver.session.return_value.__exit__ = MagicMock(return_value=False)
+    @pytest.mark.asyncio
+    async def test_returns_hits(self):
+        mock_rows = [
+            {
+                "node_type": "Function",
+                "name": "login",
+                "path": "auth.py",
+                "line_number": 10,
+                "source": "def login(): ...",
+                "docstring": "Login fn.",
+                "score": 5.0,
+            }
+        ]
+        mock_client = MagicMock()
+        mock_client._db_manager.query = AsyncMock(return_value=mock_rows)
 
-        hits = _fulltext_search(mock_driver, "login", limit=10)
+        hits = await _fulltext_search(mock_client, "login", limit=10)
         assert len(hits) == 1
         assert hits[0]["name"] == "login"
         assert hits[0]["fulltext_score"] == 5.0
 
-    def test_exception_returns_empty(self):
-        mock_driver = MagicMock()
-        mock_driver.session.side_effect = RuntimeError("connection error")
-        hits = _fulltext_search(mock_driver, "test")
+    @pytest.mark.asyncio
+    async def test_exception_returns_empty(self):
+        mock_client = MagicMock()
+        mock_client._db_manager.query = AsyncMock(side_effect=RuntimeError("connection error"))
+        hits = await _fulltext_search(mock_client, "test")
         assert hits == []
 
-    def test_cypher_params(self):
-        """Verify correct Cypher parameters are passed."""
-        mock_session = MagicMock()
-        mock_session.run.return_value = []
-        mock_driver = MagicMock()
-        mock_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
-        mock_driver.session.return_value.__exit__ = MagicMock(return_value=False)
+    @pytest.mark.asyncio
+    async def test_query_params(self):
+        """Verify SurrealQL query passes correct parameters."""
+        mock_client = MagicMock()
+        mock_client._db_manager.query = AsyncMock(return_value=[])
 
-        _fulltext_search(mock_driver, "auth query", limit=15)
-        call_args = mock_session.run.call_args
-        assert call_args.kwargs["search_term"] == "auth query"
-        assert call_args.kwargs["limit"] == 15
+        await _fulltext_search(mock_client, "auth query", limit=15)
+        call_args = mock_client._db_manager.query.call_args
+        params = call_args[0][1]
+        assert params["query"] == "auth query"
+        assert params["limit"] == 15
 
 
 # ---------------------------------------------------------------------------
-# _vector_search (mocked)
+# _vector_search (mocked cgcli client)
 # ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class _MockSearchResult:
+    """Minimal stand-in for cgcli._types.SearchResult."""
+    name: str
+    file_path: str
+    line_number: int
+    search_type: str
+    relevance_score: float
+    source: str | None = None
+    docstring: str | None = None
+    is_dependency: bool = False
+
+
+class _MockOk:
+    def __init__(self, value):
+        self.value = value
+    def is_ok(self):
+        return True
+    def is_err(self):
+        return False
+
+
+class _MockErr:
+    def __init__(self, error):
+        self.error = error
+    def is_ok(self):
+        return False
+    def is_err(self):
+        return True
 
 
 class TestVectorSearch:
-    def test_returns_empty_on_import_error(self):
-        """Should return [] if encode_query raises ImportError."""
-        mock_driver = MagicMock()
-        with patch.object(_emb_mod, "encode_query", side_effect=ImportError):
-            hits = _vector_search(mock_driver, "test")
+    @pytest.mark.asyncio
+    async def test_returns_empty_on_err(self):
+        mock_client = MagicMock()
+        mock_client.vector_search = AsyncMock(return_value=_MockErr("embeddings unavailable"))
+        hits = await _vector_search(mock_client, "test")
         assert hits == []
 
-    def test_returns_empty_on_none_vector(self):
-        """Should return [] if encode_query returns None."""
-        mock_driver = MagicMock()
-        with patch.object(_emb_mod, "encode_query", return_value=None):
-            hits = _vector_search(mock_driver, "test")
-        assert hits == []
+    @pytest.mark.asyncio
+    async def test_returns_hits(self):
+        mock_results = [
+            _MockSearchResult(
+                name="verify",
+                file_path="auth.py",
+                line_number=20,
+                search_type="Function",
+                relevance_score=0.85,
+                source="def verify(): ...",
+                docstring="Verify creds.",
+            )
+        ]
+        mock_client = MagicMock()
+        mock_client.vector_search = AsyncMock(return_value=_MockOk(mock_results))
 
-    def test_returns_hits_with_mock(self):
-        """With mocked encode_query and Neo4j, should return vector hits."""
-        import numpy as np
-
-        mock_vec = np.random.randn(384).astype(np.float32)
-
-        mock_record = {
-            "type": "Function",
-            "name": "verify",
-            "path": "auth.py",
-            "line": 20,
-            "source": "def verify(): ...",
-            "docstring": "Verify creds.",
-            "score": 0.85,
-        }
-        mock_session = MagicMock()
-        mock_session.run.return_value = [mock_record]
-        mock_driver = MagicMock()
-        mock_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
-        mock_driver.session.return_value.__exit__ = MagicMock(return_value=False)
-
-        with patch.object(_emb_mod, "encode_query", return_value=mock_vec):
-            hits = _vector_search(mock_driver, "authentication", limit=10)
+        hits = await _vector_search(mock_client, "authentication", limit=10)
         assert len(hits) == 1
         assert hits[0]["name"] == "verify"
         assert hits[0]["vector_score"] == 0.85
+
+    @pytest.mark.asyncio
+    async def test_exception_returns_empty(self):
+        mock_client = MagicMock()
+        mock_client.vector_search = AsyncMock(side_effect=RuntimeError("boom"))
+        hits = await _vector_search(mock_client, "test")
+        assert hits == []

@@ -2,7 +2,7 @@
 
 Canonical implementation shared across all encyclopedia client libraries.
 Replaces per-package duplicates in codegraph, context7client, exaclient,
-gitingest, inmemoria, kagiclient, perplexity, and searxng.
+gitingest, kagiclient, perplexity, and searxng.
 
 Usage:
     from shared.result import Result, Ok, Err

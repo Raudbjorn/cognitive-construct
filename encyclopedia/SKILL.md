@@ -217,16 +217,14 @@ NEO4J_PASSWORD=...
 ### Feature Flags
 
 ```bash
-# Search providers (via NOCP_FLAG_<NAME>=1)
-NOCP_FLAG_EXA_ENABLED=1            # Exa neural search (default: on)
-NOCP_FLAG_PERPLEXITY_ENABLED=1     # Perplexity search (default: on)
-NOCP_FLAG_BRAVE_ENABLED=1          # Brave search (default: on)
-NOCP_FLAG_KAGI_ENABLED=0           # Kagi search (default: off)
-NOCP_FLAG_SEARXNG_ENABLED=0        # SearXNG (default: off)
-NOCP_FLAG_CODEGRAPH_ENABLED=0      # Neo4j code graph (default: off)
+# Search providers (via ENCYCLOPEDIA_ENABLE_<NAME>=1)
+ENCYCLOPEDIA_ENABLE_CONTEXT7=1     # Context7 library docs (default: on)
+ENCYCLOPEDIA_ENABLE_KAGI=0         # Kagi search (default: off)
+ENCYCLOPEDIA_ENABLE_SEARXNG=0      # SearXNG (default: off)
+ENCYCLOPEDIA_ENABLE_CODEGRAPH=0    # SurrealDB code graph (default: off)
 
 # Adaptive features
-NOCP_FLAG_ENCYCLOPEDIA_ADAPTIVE_WEIGHTS=0  # Source quality profiling (default: off)
+ENCYCLOPEDIA_ADAPTIVE_WEIGHTS=0    # Source quality profiling (default: off)
 
 # Cache tuning (direct env vars, not feature flags)
 ENCYCLOPEDIA_CACHE_THRESHOLD=0.92  # Cosine similarity threshold for cache hits
@@ -259,7 +257,7 @@ Encyclopedia validates credentials at startup and returns clear errors:
 
 The degradation hierarchy (Constitution Rule 6):
 
-```
+```text
 preprocessed query + RRF fusion
   → preprocessed query + priority dedup
     → raw query + priority dedup

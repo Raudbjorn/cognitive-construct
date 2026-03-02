@@ -74,7 +74,7 @@ class TestWeightAdjustment:
     @patch("source_profiler._HAS_FLAGS", True)
     @patch("source_profiler.get_flag", return_value=True)
     @patch("source_profiler.get_source_weights", return_value={"exa": 0.5, "context7": 0.5})
-    def test_cold_start_returns_static(self, mock_weights, mock_flag):
+    def test_cold_start_returns_static(self, _mock_weights, _mock_flag):
         """Below COLD_START_THRESHOLD samples → static weights."""
         p = SourceProfiler()
         for _ in range(10):
@@ -87,7 +87,7 @@ class TestWeightAdjustment:
     @patch("source_profiler._HAS_FLAGS", True)
     @patch("source_profiler.get_flag", return_value=True)
     @patch("source_profiler.get_source_weights", return_value={"exa": 0.5})
-    def test_good_source_gets_positive_adjustment(self, mock_weights, mock_flag):
+    def test_good_source_gets_positive_adjustment(self, _mock_weights, _mock_flag):
         """A source with great metrics should get a positive weight boost."""
         p = SourceProfiler()
         for _ in range(COLD_START_THRESHOLD + 10):
@@ -102,7 +102,7 @@ class TestWeightAdjustment:
     @patch("source_profiler._HAS_FLAGS", True)
     @patch("source_profiler.get_flag", return_value=True)
     @patch("source_profiler.get_source_weights", return_value={"exa": 0.5})
-    def test_bad_source_gets_negative_adjustment(self, mock_weights, mock_flag):
+    def test_bad_source_gets_negative_adjustment(self, _mock_weights, _mock_flag):
         """A source with terrible metrics should get weight reduction."""
         p = SourceProfiler()
         for _ in range(COLD_START_THRESHOLD + 10):
@@ -118,7 +118,7 @@ class TestWeightAdjustment:
     @patch("source_profiler._HAS_FLAGS", True)
     @patch("source_profiler.get_flag", return_value=True)
     @patch("source_profiler.get_source_weights", return_value={"exa": 0.5})
-    def test_drift_cap_enforced(self, mock_weights, mock_flag):
+    def test_drift_cap_enforced(self, _mock_weights, _mock_flag):
         """Adjustment must not exceed ±20% of base weight."""
         p = SourceProfiler()
         # All perfect or all terrible — doesn't matter, cap must hold
@@ -136,7 +136,7 @@ class TestWeightAdjustment:
     @patch("source_profiler._HAS_FLAGS", True)
     @patch("source_profiler.get_flag", return_value=False)
     @patch("source_profiler.get_source_weights", return_value={"exa": 0.5})
-    def test_flag_disabled_returns_static(self, mock_weights, mock_flag):
+    def test_flag_disabled_returns_static(self, _mock_weights, _mock_flag):
         """When feature flag is off, profiler records but returns static weights."""
         p = SourceProfiler()
         for _ in range(100):

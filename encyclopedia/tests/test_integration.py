@@ -49,7 +49,7 @@ def _make_creds_mock(*, available_sources=None):
 
     available = available_sources if available_sources is not None else {"context7", "exa", "perplexity"}
 
-    def is_source_available(source, flags):
+    def is_source_available(source, _flags):
         return (source in available, None if source in available else "no_key")
 
     creds.is_source_available = MagicMock(side_effect=is_source_available)

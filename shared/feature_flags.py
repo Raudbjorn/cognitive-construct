@@ -39,7 +39,7 @@ FEATURE_FLAGS = {
     "ENCYCLOPEDIA_CACHE_SYNERGY": True,      # Encyclopedia -> Inland Empire caching
 
     # Encyclopedia adaptive features (Phase 5)
-    "ENCYCLOPEDIA_ADAPTIVE_WEIGHTS": False,  # Adaptive source weights (requires 200+ queries)
+    "ENCYCLOPEDIA_ADAPTIVE_WEIGHTS": False,  # Adaptive source weights (50+ queries per source to start adjusting)
 }
 
 

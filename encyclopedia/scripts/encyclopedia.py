@@ -1078,9 +1078,9 @@ async def query_codegraph(
             await client.close()
 
     except ImportError:
-        pass  # cgcli deps not installed — degrade gracefully
+        logger.debug("cgcli dependencies not installed — codegraph search unavailable")
     except Exception:
-        pass  # Connection or query error — degrade gracefully
+        logger.warning("Codegraph query failed", exc_info=True)
 
     if results:
         set_cache(query, "codegraph", [r.to_dict() for r in results])
@@ -1393,9 +1393,7 @@ async def execute_search(
                     result_count=len(data), latency_ms=latency_ms,
                 )
         else:
-            # Empty results (not an error, but source returned nothing)
-            if registry:
-                registry.record_success(source_name, latency_ms)
+            # Empty results — record as empty, not as success
             if profiler:
                 profiler.record(
                     source_name, query_type,

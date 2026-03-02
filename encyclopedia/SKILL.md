@@ -209,9 +209,7 @@ PERPLEXITY_API_KEY=...    # Perplexity AI search
 CONTEXT7_API_KEY=...      # Higher rate limits for library docs
 KAGI_API_KEY=...          # Kagi search (closed beta)
 SEARXNG_URL=...           # Self-hosted SearXNG instance
-NEO4J_URI=...             # CodeGraphContext (requires Neo4j)
-NEO4J_USERNAME=...
-NEO4J_PASSWORD=...
+CGCLI_DB_URL=...          # cgcli SurrealDB (default: surrealkv://~/.local/share/cgcli/codegraph)
 ```
 
 ### Feature Flags

@@ -188,20 +188,29 @@ class Vocabulary:
         if len(group) < 2:
             return
 
-        # Check for overlap with existing groups and merge
-        for idx, existing in enumerate(self._multi_way):
-            if group & existing:
-                existing.update(group)
-                for t in group:
-                    self._term_to_group[t] = idx
-                self._known_terms.update(group)
-                return
+        # Find all existing groups that overlap with the new terms
+        overlapping_idxs = [
+            idx for idx, existing in enumerate(self._multi_way)
+            if group & existing
+        ]
 
-        new_idx = len(self._multi_way)
-        self._multi_way.append(group)
-        for t in group:
-            self._term_to_group[t] = new_idx
-        self._known_terms.update(group)
+        if overlapping_idxs:
+            # Merge into the first overlapping group
+            target_idx = overlapping_idxs[0]
+            merged = self._multi_way[target_idx] | group
+            for idx in overlapping_idxs[1:]:
+                merged |= self._multi_way[idx]
+                self._multi_way[idx] = set()  # empty, preserve indices
+            self._multi_way[target_idx] = merged
+            for t in merged:
+                self._term_to_group[t] = target_idx
+            self._known_terms.update(merged)
+        else:
+            new_idx = len(self._multi_way)
+            self._multi_way.append(group)
+            for t in group:
+                self._term_to_group[t] = new_idx
+            self._known_terms.update(group)
 
     def add_one_way(self, source: str, targets: list[str]) -> None:
         """Add a one-way synonym mapping at runtime."""

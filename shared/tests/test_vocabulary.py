@@ -210,6 +210,15 @@ class TestLoading:
         result = v.expand_term("a")
         assert "c" in result
 
+    def test_merge_multiple_groups_on_overlap(self) -> None:
+        v = Vocabulary(max_expansions=10)
+        v.add_multi_way(["a", "b"])
+        v.add_multi_way(["c", "d"])
+        # Bridge both existing groups
+        v.add_multi_way(["b", "c"])
+        result = v.expand_term("a")
+        assert {"a", "b", "c", "d"} <= set(result)
+
 
 # ------------------------------------------------------------------
 # Levenshtein

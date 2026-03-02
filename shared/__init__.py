@@ -84,6 +84,7 @@ from .config_check import (
     ConfigStatus,
     EX_CONFIG,
 )
+from .result import Result, Ok, Err
 
 __all__ = [
     # Credentials
@@ -171,4 +172,8 @@ __all__ = [
     "get_all_skills_status",
     "ConfigStatus",
     "EX_CONFIG",
+    # Result type
+    "Result",
+    "Ok",
+    "Err",
 ]

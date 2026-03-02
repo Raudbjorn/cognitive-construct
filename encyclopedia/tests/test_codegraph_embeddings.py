@@ -1,4 +1,4 @@
-"""Tests for codegraph.embeddings module."""
+"""Tests for cgcli.embeddings module."""
 from __future__ import annotations
 
 import importlib
@@ -9,11 +9,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 # Import the embeddings module directly to avoid pulling in tree-sitter
-# via codegraph.__init__ → indexer → graph_builder
-_embeddings_path = Path(__file__).parent.parent / "scripts" / "codegraph" / "embeddings.py"
-_spec = importlib.util.spec_from_file_location("codegraph.embeddings", _embeddings_path)
+# via cgcli.__init__ → indexer → graph_builder
+_embeddings_path = Path(__file__).parent.parent / "scripts" / "cgcli" / "embeddings.py"
+_spec = importlib.util.spec_from_file_location("cgcli.embeddings", _embeddings_path)
 _mod = importlib.util.module_from_spec(_spec)
-sys.modules["codegraph.embeddings"] = _mod
+sys.modules["cgcli.embeddings"] = _mod
 _spec.loader.exec_module(_mod)
 
 BIENCODER_MODEL = _mod.BIENCODER_MODEL

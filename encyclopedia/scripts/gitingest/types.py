@@ -11,7 +11,6 @@ class RepoInfo:
 
     url: str
     local_path: str
-    was_cached: bool
 
 
 @dataclass(frozen=True, slots=True)

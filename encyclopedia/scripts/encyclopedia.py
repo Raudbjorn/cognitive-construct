@@ -30,6 +30,61 @@ from exaclient import ExaClient, WebSearchOptions, CodeSearchOptions
 from kagiclient import KagiClient
 from perplexity import PerplexityClient
 
+# Import-guarded Phase 3-5 modules (graceful degradation)
+try:
+    from source_health import HealthRegistry, HealthState
+
+    _HAS_HEALTH = True
+except ImportError:
+    _HAS_HEALTH = False
+
+try:
+    from semantic_cache import SemanticCache
+
+    _HAS_SEMANTIC_CACHE = True
+except ImportError:
+    _HAS_SEMANTIC_CACHE = False
+
+try:
+    from source_profiler import SourceProfiler
+
+    _HAS_PROFILER = True
+except ImportError:
+    _HAS_PROFILER = False
+
+# Module-level singletons (lazy-initialized in execute_search)
+_health_registry: "HealthRegistry | None" = None
+_semantic_cache: "SemanticCache | None" = None
+_source_profiler: "SourceProfiler | None" = None
+
+
+def _get_health_registry() -> "HealthRegistry | None":
+    global _health_registry
+    if not _HAS_HEALTH:
+        return None
+    if _health_registry is None:
+        _health_registry = HealthRegistry()
+    return _health_registry
+
+
+def _get_semantic_cache() -> "SemanticCache | None":
+    global _semantic_cache
+    if not _HAS_SEMANTIC_CACHE:
+        return None
+    if _semantic_cache is None:
+        _semantic_cache = SemanticCache()
+        _semantic_cache.load()
+    return _semantic_cache
+
+
+def _get_source_profiler() -> "SourceProfiler | None":
+    global _source_profiler
+    if not _HAS_PROFILER:
+        return None
+    if _source_profiler is None:
+        _source_profiler = SourceProfiler()
+    return _source_profiler
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -173,18 +228,18 @@ def _tokenize_identifier(ident: str) -> list[str]:
 
 
 def expand_codegraph_query(query: str) -> str:
-    """Expand a search query with code-aware synonyms for Lucene fulltext.
+    """Expand a search query with code-aware synonyms for BM25 fulltext.
 
     Pipeline:
     1. Tokenize each word (split camelCase/snake_case identifiers)
     2. Look up each token in the synonym map
-    3. Deduplicate and format as Lucene OR expression
+    3. Deduplicate and return space-separated terms (BM25 implicit OR)
 
     Args:
         query: Raw user search query.
 
     Returns:
-        Lucene-compatible query string with OR-joined expanded terms.
+        Space-separated query string with expanded terms.
     """
     raw_tokens: list[str] = []
     for word in query.split():
@@ -200,7 +255,7 @@ def expand_codegraph_query(query: str) -> str:
     if not expanded:
         return query
 
-    return " OR ".join(sorted(expanded))
+    return " ".join(sorted(expanded))
 
 
 # ---------------------------------------------------------------------------
@@ -314,9 +369,7 @@ class Credentials:
     context7_key: str | None = None
     kagi_key: str | None = None
     searxng_url: str | None = None
-    neo4j_uri: str | None = None
-    neo4j_user: str | None = None
-    neo4j_password: str | None = None
+    cgcli_db_url: str | None = None
 
     @classmethod
     def load(cls) -> "Credentials":
@@ -328,9 +381,7 @@ class Credentials:
             context7_key=os.environ.get("CONTEXT7_API_KEY"),
             kagi_key=os.environ.get("KAGI_API_KEY"),
             searxng_url=os.environ.get("SEARXNG_URL"),
-            neo4j_uri=os.environ.get("NEO4J_URI"),
-            neo4j_user=os.environ.get("NEO4J_USERNAME"),
-            neo4j_password=os.environ.get("NEO4J_PASSWORD"),
+            cgcli_db_url=os.environ.get("CGCLI_DB_URL"),
         )
 
     def has_any_search(self) -> bool:
@@ -358,8 +409,8 @@ class Credentials:
         if source == "searxng":
             return bool(self.searxng_url), "missing_credentials"
         if source == "codegraph":
-            ready = bool(self.neo4j_uri and self.neo4j_user and self.neo4j_password)
-            return ready, "missing_credentials"
+            # cgcli uses embedded SurrealDB — no external credentials needed
+            return True, None
         if source == "mcp_git_ingest":
             # Always available (uses HTTP)
             return True, None
@@ -595,13 +646,20 @@ class DegradationTracker:
         return bool(self.missing or self.errors)
 
 
-async def run_source_task(source: str, coro: Awaitable[list[SearchResult]]) -> tuple[str, list[SearchResult] | None, Exception | None]:
-    """Wrap a source coroutine to capture exceptions."""
+async def run_source_task(source: str, coro: Awaitable[list[SearchResult]]) -> tuple[str, list[SearchResult] | None, Exception | None, float]:
+    """Wrap a source coroutine to capture exceptions and latency.
+
+    Returns (source, data, error, latency_ms).
+    """
+    import time as _time
+    start = _time.monotonic()
     try:
         data = await coro
-        return source, data, None
+        elapsed_ms = (_time.monotonic() - start) * 1000
+        return source, data, None, elapsed_ms
     except Exception as exc:
-        return source, None, exc
+        elapsed_ms = (_time.monotonic() - start) * 1000
+        return source, None, exc, elapsed_ms
 
 
 # ---------------------------------------------------------------------------
@@ -654,7 +712,7 @@ async def query_exa(query: str, creds: Credentials) -> list[SearchResult]:
         return [SearchResult(**r) for r in cached]  # source already in cached data
 
     client = ExaClient(api_key=creds.exa_key)
-    search_result = client.web_search(query, WebSearchOptions(num_results=5))
+    search_result = await client.web_search(query, WebSearchOptions(num_results=5))
 
     if search_result.is_ok():
         context = search_result.value.context
@@ -693,7 +751,7 @@ async def query_exa_code(query: str, creds: Credentials) -> list[SearchResult]:
         return [SearchResult(**r) for r in cached]  # source already in cached data
 
     client = ExaClient(api_key=creds.exa_key)
-    search_result = client.code_search(query, CodeSearchOptions(tokens=5000))
+    search_result = await client.code_search(query, CodeSearchOptions(tokens=5000))
 
     if search_result.is_ok():
         content = search_result.value.content
@@ -790,7 +848,7 @@ async def query_kagi(query: str, creds: Credentials) -> list[SearchResult]:
 
 
 def _build_codegraph_result(rec: dict) -> SearchResult:
-    """Build a SearchResult from a Neo4j record dict."""
+    """Build a SearchResult from a codegraph record dict."""
     node_type = rec.get("type") or "Code"
     name = rec.get("name") or ""
     path = rec.get("path") or ""
@@ -825,75 +883,59 @@ def _build_codegraph_result(rec: dict) -> SearchResult:
     )
 
 
-def _fulltext_search(driver: Any, search_term: str, limit: int = 20) -> list[dict]:
-    """Run fulltext Lucene search against code_search_index."""
+async def _fulltext_search(client: Any, search_term: str, limit: int = 20) -> list[dict]:
+    """Run BM25 fulltext search via cgcli's SurrealDB backend."""
     hits: list[dict] = []
     try:
-        with driver.session() as session:
-            records = session.run(
-                """
-                CALL db.index.fulltext.queryNodes("code_search_index", $search_term)
-                YIELD node, score
-                RETURN labels(node)[0] as type, node.name as name,
-                       node.path as path, node.line_number as line,
-                       node.source as source, node.docstring as docstring,
-                       score
-                ORDER BY score DESC
-                LIMIT $limit
-                """,
-                search_term=search_term,
-                limit=limit,
-            )
-            for rec in records:
-                hits.append({
-                    "type": rec["type"],
-                    "name": rec["name"],
-                    "path": rec["path"],
-                    "line": rec["line"],
-                    "source": rec["source"],
-                    "docstring": rec["docstring"],
-                    "fulltext_score": rec["score"] or 0.0,
-                })
+        result = await client._db_manager.query(
+            """
+            SELECT node_type, name, path, line_number, source, docstring,
+                   search::score(1) AS score
+            FROM node
+            WHERE (name @1@ $query OR source @1@ $query OR docstring @1@ $query)
+            ORDER BY score DESC
+            LIMIT $limit;
+            """,
+            {"query": search_term, "limit": limit},
+        )
+        rows = result if isinstance(result, list) else []
+        for rec in rows:
+            if not isinstance(rec, dict):
+                continue
+            hits.append({
+                "type": rec.get("node_type", "Code"),
+                "name": rec.get("name", ""),
+                "path": rec.get("path", ""),
+                "line": rec.get("line_number", 0),
+                "source": rec.get("source", ""),
+                "docstring": rec.get("docstring", ""),
+                "fulltext_score": rec.get("score") or 0.0,
+            })
     except Exception:
         pass
     return hits
 
 
-def _vector_search(driver: Any, query: str, limit: int = 20) -> list[dict]:
-    """Run vector similarity search against code_vector_index."""
+async def _vector_search(client: Any, query: str, limit: int = 20) -> list[dict]:
+    """Run vector similarity search via cgcli's HNSW index."""
     try:
-        from codegraph.embeddings import encode_query
-
-        query_vec = encode_query(query)
-        if query_vec is None:
+        result = await client.vector_search(query, limit=limit)
+        if result.is_err():
             return []
 
         hits: list[dict] = []
-        with driver.session() as session:
-            records = session.run(
-                """
-                CALL db.index.vector.queryNodes("code_vector_index", $limit, $query_vec)
-                YIELD node, score
-                RETURN labels(node)[0] as type, node.name as name,
-                       node.path as path, node.line_number as line,
-                       node.source as source, node.docstring as docstring,
-                       score
-                """,
-                limit=limit,
-                query_vec=query_vec.tolist(),
-            )
-            for rec in records:
-                hits.append({
-                    "type": rec["type"],
-                    "name": rec["name"],
-                    "path": rec["path"],
-                    "line": rec["line"],
-                    "source": rec["source"],
-                    "docstring": rec["docstring"],
-                    "vector_score": rec["score"] or 0.0,
-                })
+        for sr in result.value:
+            hits.append({
+                "type": sr.search_type or "Code",
+                "name": sr.name,
+                "path": sr.file_path,
+                "line": sr.line_number,
+                "source": sr.source or "",
+                "docstring": sr.docstring or "",
+                "vector_score": sr.relevance_score,
+            })
         return hits
-    except (ImportError, Exception):
+    except Exception:
         return []
 
 
@@ -943,7 +985,7 @@ def _rerank_candidates(
         return []
 
     try:
-        from codegraph.embeddings import rerank
+        from cgcli.embeddings import rerank
 
         docs = [
             {"title": c.title, "content": c.content[:500], "text": f"{c.title} {c.content[:500]}"}
@@ -979,25 +1021,22 @@ async def query_codegraph(
     use_vectors: bool = True,
     use_reranking: bool = True,
 ) -> list[SearchResult]:
-    """Query CodeGraphContext via hybrid fulltext + vector search.
+    """Query code graph via hybrid fulltext + vector search.
 
     Pipeline:
-    1. Fulltext search with optional synonym expansion
+    1. Fulltext BM25 search with optional synonym expansion
     2. Vector similarity search (if ``use_vectors``)
     3. Merge and deduplicate candidates with weighted scoring
     4. Cross-encoder reranking (if ``use_reranking``)
 
     Args:
         query: Raw search query.
-        creds: Credentials with Neo4j connection info.
+        creds: Credentials (cgcli_db_url optional, defaults to embedded DB).
         expand: Expand query with code-aware synonyms before fulltext search.
         use_vectors: Enable vector similarity search.
         use_reranking: Enable cross-encoder reranking.
     """
     results: list[SearchResult] = []
-
-    if not (creds.neo4j_uri and creds.neo4j_password):
-        return results
 
     cached = get_cached(query, "codegraph")
     if cached:
@@ -1006,44 +1045,40 @@ async def query_codegraph(
     search_term = expand_codegraph_query(query) if expand else query
 
     try:
-        from neo4j import GraphDatabase
+        from cgcli import CodeGraphClient
 
-        loop = asyncio.get_event_loop()
+        client = CodeGraphClient(db_url=creds.cgcli_db_url)
+        conn_result = await client.connect()
+        if conn_result.is_err():
+            return results
 
-        def _run_hybrid() -> list[SearchResult]:
-            driver = GraphDatabase.driver(
-                creds.neo4j_uri,
-                auth=(creds.neo4j_user or "neo4j", creds.neo4j_password),
-            )
-            try:
-                # 1. Fulltext search with expanded query
-                ft_hits = _fulltext_search(driver, search_term, limit=20)
+        try:
+            # 1. Fulltext BM25 search with expanded query
+            ft_hits = await _fulltext_search(client, search_term, limit=20)
 
-                # 2. Vector search with original query (not expanded)
-                vec_hits = _vector_search(driver, query, limit=20) if use_vectors else []
+            # 2. Vector search with original query (not expanded)
+            vec_hits = await _vector_search(client, query, limit=20) if use_vectors else []
 
-                # 3. Merge and deduplicate
-                if vec_hits:
-                    merged = _merge_candidates(ft_hits, vec_hits)
-                else:
-                    # Fulltext-only: normalize scores and build results
-                    max_ft = max((h["fulltext_score"] for h in ft_hits), default=1.0) or 1.0
-                    for h in ft_hits:
-                        h["combined_score"] = h["fulltext_score"] / max_ft
-                    merged = [_build_codegraph_result(h) for h in ft_hits]
+            # 3. Merge and deduplicate
+            if vec_hits:
+                merged = _merge_candidates(ft_hits, vec_hits)
+            else:
+                # Fulltext-only: normalize scores and build results
+                max_ft = max((h["fulltext_score"] for h in ft_hits), default=1.0) or 1.0
+                for h in ft_hits:
+                    h["combined_score"] = h["fulltext_score"] / max_ft
+                merged = [_build_codegraph_result(h) for h in ft_hits]
 
-                # 4. Cross-encoder reranking
-                if use_reranking and len(merged) > 1:
-                    return _rerank_candidates(query, merged, top_k=10)
-
-                return merged[:10]
-            finally:
-                driver.close()
-
-        results = await loop.run_in_executor(None, _run_hybrid)
+            # 4. Cross-encoder reranking
+            if use_reranking and len(merged) > 1:
+                results = _rerank_candidates(query, merged, top_k=10)
+            else:
+                results = merged[:10]
+        finally:
+            await client.close()
 
     except ImportError:
-        pass  # neo4j not installed — degrade gracefully
+        pass  # cgcli deps not installed — degrade gracefully
     except Exception:
         pass  # Connection or query error — degrade gracefully
 
@@ -1106,11 +1141,25 @@ async def execute_search(
     expand: bool = True,
     use_vectors: bool = True,
     use_reranking: bool = True,
+    verbose: bool = False,
+    dry_run: bool = False,
 ) -> dict:
-    """Execute search across multiple sources with parallel queries."""
+    """Execute search across multiple sources with parallel queries.
+
+    Pipeline (SPEC section 3.9):
+    1. Semantic cache check (Phase 4)
+    2. Query preprocessing + classification
+    3. Source routing with health filtering (Phase 3)
+    4. Parallel dispatch with timeout
+    5. Record health + profiler metrics (Phase 3 + 5)
+    6. RRF fusion or fallback compression
+    7. Cache store (Phase 4)
+    8. Response with diagnostics
+    """
     creds = Credentials.load()
     feature_flags = FeatureFlags()
     degradation = DegradationTracker()
+    verbose_data: dict[str, Any] = {} if verbose else {}
 
     # Validate credentials
     valid, msg = creds.validate()
@@ -1123,12 +1172,43 @@ async def execute_search(
             "degradation": degradation.summary(),
         }
 
-    # Determine sources to query
+    # --- Step 1: Query analysis ---
     query_type = classify_query(query)
     repo_hint, cleaned_query = extract_repo_hint(query)
     effective_query = cleaned_query or query
-    requested_sources: list[str] | None = None
 
+    if verbose:
+        verbose_data["query_analysis"] = {
+            "original": query,
+            "effective": effective_query,
+            "query_type": query_type,
+            "repo_hint": repo_hint,
+        }
+
+    # --- Step 2: Semantic cache check (Phase 4) ---
+    cache = _get_semantic_cache()
+    if cache and not dry_run:
+        cached_results = cache.check(effective_query, query_type)
+        if cached_results is not None:
+            resp = {
+                "status": "success",
+                "query_type": query_type,
+                "results": cached_results,
+                "sources_used": [],
+                "cached": True,
+                "degraded": False,
+                "degradation": degradation.summary(),
+            }
+            if verbose:
+                verbose_data["cache_status"] = "hit"
+                resp["verbose"] = verbose_data
+            return resp
+
+    if verbose:
+        verbose_data["cache_status"] = "miss" if cache else "unavailable"
+
+    # --- Step 3: Source routing ---
+    requested_sources: list[str] | None = None
     if sources:
         normalized = [s.strip().lower() for s in sources if s.strip()]
         unknown = [s for s in normalized if s not in KNOWN_SOURCES]
@@ -1142,7 +1222,6 @@ async def execute_search(
             }
         requested_sources = normalized
 
-    # Use routing table
     routed_sources = requested_sources or SOURCE_ROUTING.get(query_type, ["exa", "perplexity"])
     target_sources: list[str] = []
 
@@ -1154,7 +1233,6 @@ async def execute_search(
             degradation.add_missing(source, reason or "unavailable", is_optional_source(source))
 
     # Special handling for repo-dependent sources
-    # mcp_git_ingest needs a repo hint; codegraph searches all indexed repos
     if repo_hint is None:
         if "mcp_git_ingest" in target_sources:
             target_sources.remove("mcp_git_ingest")
@@ -1168,6 +1246,35 @@ async def execute_search(
         if "mcp_git_ingest" not in target_sources and "mcp_git_ingest" in routed_sources:
             target_sources.append("mcp_git_ingest")
 
+    # --- Phase 3: Filter by circuit breaker health ---
+    registry = _get_health_registry()
+    if registry:
+        healthy_sources: list[str] = []
+        for source in target_sources:
+            if registry.is_available(source):
+                healthy_sources.append(source)
+            else:
+                degradation.add_missing(source, "circuit_open", is_optional_source(source))
+
+        # Cross-type fallback if all primaries are circuit-broken
+        if not healthy_sources and target_sources:
+            fallbacks = registry.get_fallback_sources(query_type, target_sources)
+            for fb in fallbacks:
+                fb_available, fb_reason = creds.is_source_available(fb, feature_flags)
+                if fb_available:
+                    healthy_sources.append(fb)
+            if verbose and fallbacks:
+                verbose_data["fallback_sources"] = fallbacks
+
+        target_sources = healthy_sources
+
+    if verbose:
+        verbose_data["source_routing"] = {
+            "routed": routed_sources,
+            "target": target_sources,
+            "health": registry.get_all_statuses() if registry else {},
+        }
+
     if not target_sources:
         return {
             "status": "error",
@@ -1177,7 +1284,30 @@ async def execute_search(
             "degradation": degradation.summary(),
         }
 
-    # Execute queries in parallel
+    # --- Dry-run: return analysis without executing queries ---
+    if dry_run:
+        resp = {
+            "status": "dry_run",
+            "query_type": query_type,
+            "effective_query": effective_query,
+            "target_sources": target_sources,
+            "repo_hint": repo_hint,
+            "degraded": degradation.is_degraded,
+            "degradation": degradation.summary(),
+        }
+        if verbose:
+            resp["verbose"] = verbose_data
+        return resp
+
+    # --- Step 4: Get weights (Phase 5: adaptive or static) ---
+    profiler = _get_source_profiler()
+    source_weights: dict[str, float] | None = None
+    if profiler:
+        source_weights = profiler.get_adjusted_weights(query_type)
+        if verbose:
+            verbose_data["profiler"] = profiler.get_profile(query_type)
+
+    # --- Step 5: Parallel dispatch ---
     tasks: list[asyncio.Task] = []
     for source in target_sources:
         if source == "context7":
@@ -1204,7 +1334,7 @@ async def execute_search(
         setattr(task, "source_name", source)
         tasks.append(task)
 
-    done_results: list[tuple[str, list[SearchResult] | None, Exception | None]] = []
+    done_results: list[tuple[str, list[SearchResult] | None, Exception | None, float]] = []
     if tasks:
         done, pending = await asyncio.wait(tasks, timeout=TOTAL_TIMEOUT)
         for task in done:
@@ -1222,22 +1352,55 @@ async def execute_search(
                     f"Timed out after {TOTAL_TIMEOUT}s",
                     is_optional_source(source_name),
                 )
+                # Record timeout in health and profiler
+                if registry:
+                    registry.record_failure(source_name)
+                if profiler:
+                    profiler.record(
+                        source_name, query_type,
+                        timeout=True, latency_ms=TOTAL_TIMEOUT * 1000,
+                    )
 
-    # Flatten and filter results
+    # --- Step 6: Collect results + record health/profiler ---
     results: list[SearchResult] = []
     sources_used: list[str] = []
+    per_source_results: dict[str, list[SearchResult]] = {}
 
-    for source_name, data, error in done_results:
+    for source_name, data, error, latency_ms in done_results:
         if error:
             degradation.add_error(
                 source_name,
                 str(error),
                 is_optional_source(source_name),
             )
+            if registry:
+                registry.record_failure(source_name)
+            if profiler:
+                profiler.record(
+                    source_name, query_type,
+                    result_count=0, latency_ms=latency_ms, empty=True,
+                )
             continue
         if data:
             results.extend(data)
             sources_used.append(source_name)
+            per_source_results[source_name] = data
+            if registry:
+                registry.record_success(source_name, latency_ms)
+            if profiler:
+                profiler.record(
+                    source_name, query_type,
+                    result_count=len(data), latency_ms=latency_ms,
+                )
+        else:
+            # Empty results (not an error, but source returned nothing)
+            if registry:
+                registry.record_success(source_name, latency_ms)
+            if profiler:
+                profiler.record(
+                    source_name, query_type,
+                    result_count=0, latency_ms=latency_ms, empty=True,
+                )
 
     if not results:
         return {
@@ -1248,17 +1411,33 @@ async def execute_search(
             "degradation": degradation.summary(),
         }
 
-    # Compress results: deduplicate, rank by semantic relevance, limit
+    # --- Step 7: Compress/fuse results ---
     results = compress_for_context(results, query, max_results=limit)
 
-    return {
+    # --- Step 8: Store in semantic cache (Phase 4) ---
+    result_dicts = [r.to_dict() for r in results]
+    if cache:
+        cache.store(effective_query, query_type, result_dicts, sources_used)
+
+    resp = {
         "status": "success",
         "query_type": query_type,
-        "results": [r.to_dict() for r in results],
+        "results": result_dicts,
         "sources_used": list(dict.fromkeys(sources_used)),
         "degraded": degradation.is_degraded,
         "degradation": degradation.summary(),
     }
+
+    if verbose:
+        verbose_data["result_count"] = len(result_dicts)
+        verbose_data["sources_result_counts"] = {
+            s: len(r) for s, r in per_source_results.items()
+        }
+        if cache:
+            verbose_data["cache_stats"] = cache.get_stats()
+        resp["verbose"] = verbose_data
+
+    return resp
 
 
 async def execute_lookup(topic: str, version: str | None = None) -> dict:
@@ -1341,6 +1520,8 @@ def handle_search(
     expand: bool = True,
     use_vectors: bool = True,
     use_reranking: bool = True,
+    verbose: bool = False,
+    dry_run: bool = False,
 ) -> None:
     """Handle the search command."""
     sanitized = sanitize_input(query)
@@ -1352,6 +1533,7 @@ def handle_search(
     result = asyncio.run(execute_search(
         sanitized, source_list, limit,
         expand=expand, use_vectors=use_vectors, use_reranking=use_reranking,
+        verbose=verbose, dry_run=dry_run,
     ))
     output_json(result, result.get("code", 0))
 
@@ -1378,22 +1560,15 @@ def handle_code(repo_path: str, query: str, depth: str) -> None:
     output_json(result, result.get("code", 0))
 
 
-def _get_codegraph_client():
-    """Create and connect a CodeGraphClient from env credentials."""
-    from codegraph import CodeGraphClient
+async def _get_codegraph_client():
+    """Create and connect a CodeGraphClient."""
+    from cgcli import CodeGraphClient
 
     creds = Credentials.load()
-    if not (creds.neo4j_uri and creds.neo4j_password):
-        output_error(ErrorCode.CONFIG_ERROR, "NEO4J_URI and NEO4J_PASSWORD must be set")
-
-    client = CodeGraphClient(
-        neo4j_uri=creds.neo4j_uri,
-        neo4j_username=creds.neo4j_user or "neo4j",
-        neo4j_password=creds.neo4j_password,
-    )
-    result = client.connect()
+    client = CodeGraphClient(db_url=creds.cgcli_db_url)
+    result = await client.connect()
     if result.is_err():
-        output_error(ErrorCode.BACKEND_UNAVAILABLE, f"Neo4j connection failed: {result.error.message}")
+        output_error(ErrorCode.BACKEND_UNAVAILABLE, f"SurrealDB connection failed: {result.error.message}")
     return client
 
 
@@ -1406,55 +1581,66 @@ def handle_index(path_str: str, dependency: bool, force: bool, *, no_embed: bool
     if no_embed:
         os.environ["CODEGRAPH_SKIP_EMBEDDINGS"] = "1"
 
-    client = _get_codegraph_client()
-    try:
-        if force:
-            client.delete_repository(str(repo_path))
+    async def _run() -> None:
+        client = await _get_codegraph_client()
+        try:
+            if force:
+                await client.delete_repository(str(repo_path))
 
-        result = asyncio.run(client.index_repository(str(repo_path), as_dependency=dependency))
-        if result.is_ok():
-            output_json({"status": "success", **result.value})
-        else:
-            output_json(
-                {"status": "error", "code": ErrorCode.INTERNAL_ERROR.value, "message": result.error.message},
-                ErrorCode.INTERNAL_ERROR.value,
-            )
-    finally:
-        client.close()
+            result = await client.index_repository(str(repo_path), as_dependency=dependency)
+            if result.is_ok():
+                output_json({"status": "success", **result.value})
+            else:
+                output_json(
+                    {"status": "error", "code": ErrorCode.INTERNAL_ERROR.value, "message": result.error.message},
+                    ErrorCode.INTERNAL_ERROR.value,
+                )
+        finally:
+            await client.close()
+
+    asyncio.run(_run())
 
 
 def handle_index_list() -> None:
     """Handle the index-list command."""
-    client = _get_codegraph_client()
-    try:
-        result = client.list_repositories()
-        if result.is_ok():
-            repos = [{"name": r.name, "path": r.path, "is_dependency": r.is_dependency} for r in result.value]
-            output_json({"status": "success", "repositories": repos})
-        else:
-            output_json(
-                {"status": "error", "code": ErrorCode.INTERNAL_ERROR.value, "message": result.error.message},
-                ErrorCode.INTERNAL_ERROR.value,
-            )
-    finally:
-        client.close()
+
+    async def _run() -> None:
+        client = await _get_codegraph_client()
+        try:
+            result = await client.list_repositories()
+            if result.is_ok():
+                repos = [{"name": r.name, "path": r.path, "is_dependency": r.is_dependency} for r in result.value]
+                output_json({"status": "success", "repositories": repos})
+            else:
+                output_json(
+                    {"status": "error", "code": ErrorCode.INTERNAL_ERROR.value, "message": result.error.message},
+                    ErrorCode.INTERNAL_ERROR.value,
+                )
+        finally:
+            await client.close()
+
+    asyncio.run(_run())
 
 
 def handle_index_delete(path_str: str) -> None:
     """Handle the index-delete command."""
     repo_path = Path(path_str).resolve()
-    client = _get_codegraph_client()
-    try:
-        result = client.delete_repository(str(repo_path))
-        if result.is_ok():
-            output_json({"status": "success", "path": str(repo_path), "deleted": True})
-        else:
-            output_json(
-                {"status": "error", "code": ErrorCode.INTERNAL_ERROR.value, "message": result.error.message},
-                ErrorCode.INTERNAL_ERROR.value,
-            )
-    finally:
-        client.close()
+
+    async def _run() -> None:
+        client = await _get_codegraph_client()
+        try:
+            result = await client.delete_repository(str(repo_path))
+            if result.is_ok():
+                output_json({"status": "success", "path": str(repo_path), "deleted": True})
+            else:
+                output_json(
+                    {"status": "error", "code": ErrorCode.INTERNAL_ERROR.value, "message": result.error.message},
+                    ErrorCode.INTERNAL_ERROR.value,
+                )
+        finally:
+            await client.close()
+
+    asyncio.run(_run())
 
 
 # ---------------------------------------------------------------------------
@@ -1504,6 +1690,18 @@ Examples:
         default=False,
         help="Disable cross-encoder reranking for codegraph",
     )
+    search_parser.add_argument(
+        "--verbose",
+        action="store_true",
+        default=False,
+        help="Show query analysis, source routing, fusion breakdown, and cache status",
+    )
+    search_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="Show preprocessing + routing without executing queries",
+    )
 
     # LOOKUP command
     lookup_parser = subparsers.add_parser("lookup", help="Look up documentation for a topic")
@@ -1550,6 +1748,8 @@ Examples:
             expand=not args.no_expand,
             use_vectors=not args.no_vectors,
             use_reranking=not args.no_rerank,
+            verbose=args.verbose,
+            dry_run=args.dry_run,
         )
     elif args.command == "lookup":
         handle_lookup(args.topic, args.version)

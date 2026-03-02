@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import os
 import shutil
 import tempfile
@@ -13,20 +12,11 @@ from .result import Err, Ok, Result
 from .types import DirectoryTree, FileContent, GitIngestError, RepoInfo
 
 
-def _get_repo_cache_path(repo_url: str) -> str:
-    """Generate cache path for a repository URL."""
-    repo_hash = hashlib.sha256(repo_url.encode()).hexdigest()[:12]
-    return os.path.join(tempfile.gettempdir(), f"gitingest_{repo_hash}")
-
-
-def clone_repo(repo_url: str, force_fresh: bool = False) -> Result[RepoInfo, GitIngestError]:
-    """Clone a repository and return the local path.
-
-    Uses SHA256 hash-based caching to reuse previously cloned repos.
+def clone_repo(repo_url: str) -> Result[RepoInfo, GitIngestError]:
+    """Clone a repository into a temporary directory.
 
     Args:
         repo_url: URL of the Git repository to clone
-        force_fresh: If True, remove any cached version and clone fresh
 
     Returns:
         Result containing RepoInfo on success or GitIngestError on failure
@@ -36,29 +26,12 @@ def clone_repo(repo_url: str, force_fresh: bool = False) -> Result[RepoInfo, Git
     except ImportError:
         return Err(GitIngestError("GitPython not installed. Run: pip install gitpython"))
 
-    cache_path = _get_repo_cache_path(repo_url)
-
-    # Force fresh clone if requested
-    if force_fresh and os.path.exists(cache_path):
-        shutil.rmtree(cache_path, ignore_errors=True)
-
-    # Check if we have a valid cached clone
-    if os.path.exists(cache_path):
-        try:
-            repo = git.Repo(cache_path)
-            if not repo.bare and repo.remote().url == repo_url:
-                return Ok(RepoInfo(url=repo_url, local_path=cache_path, was_cached=True))
-        except Exception:
-            # Cache is invalid, remove it
-            shutil.rmtree(cache_path, ignore_errors=True)
-
-    # Clone fresh
-    os.makedirs(cache_path, exist_ok=True)
+    clone_path = tempfile.mkdtemp(prefix="gitingest_")
     try:
-        git.Repo.clone_from(repo_url, cache_path)
-        return Ok(RepoInfo(url=repo_url, local_path=cache_path, was_cached=False))
+        git.Repo.clone_from(repo_url, clone_path)
+        return Ok(RepoInfo(url=repo_url, local_path=clone_path))
     except Exception as e:
-        shutil.rmtree(cache_path, ignore_errors=True)
+        shutil.rmtree(clone_path, ignore_errors=True)
         return Err(GitIngestError(f"Failed to clone repository: {e}", repo_url))
 
 
@@ -175,9 +148,9 @@ class GitIngestClient:
 
     cache_dir: str | None = None
 
-    def clone(self, repo_url: str, force_fresh: bool = False) -> Result[RepoInfo, GitIngestError]:
+    def clone(self, repo_url: str) -> Result[RepoInfo, GitIngestError]:
         """Clone a repository."""
-        return clone_repo(repo_url, force_fresh)
+        return clone_repo(repo_url)
 
     def get_tree(
         self,
@@ -204,7 +177,6 @@ class GitIngestClient:
         repo_url: str,
         file_paths: list[str] | None = None,
         include_tree: bool = True,
-        force_fresh: bool = False,
     ) -> Result[dict, GitIngestError]:
         """Full ingestion: clone repo, get tree, and optionally read files.
 
@@ -212,13 +184,12 @@ class GitIngestClient:
             repo_url: URL of the Git repository
             file_paths: Optional list of files to read
             include_tree: Whether to include directory tree (default: True)
-            force_fresh: Force fresh clone (default: False)
 
         Returns:
             Result containing dict with repo info, tree, and file contents
         """
         # Clone
-        clone_result = self.clone(repo_url, force_fresh)
+        clone_result = self.clone(repo_url)
         if clone_result.is_err():
             return clone_result
 

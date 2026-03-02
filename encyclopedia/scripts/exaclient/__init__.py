@@ -27,8 +27,6 @@ from .types import (
     CodeSearchResult,
     ExaSearchResponse,
     ExaCodeResponse,
-    DeepResearchRequest,
-    DeepResearchResponse,
 )
 from .result import Result, Ok, Err
 
@@ -44,8 +42,6 @@ __all__ = [
     "CodeSearchResult",
     "ExaSearchResponse",
     "ExaCodeResponse",
-    "DeepResearchRequest",
-    "DeepResearchResponse",
     "Result",
     "Ok",
     "Err",

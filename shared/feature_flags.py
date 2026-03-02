@@ -37,6 +37,9 @@ FEATURE_FLAGS = {
     "RHETORIC_ENCYCLOPEDIA_SYNERGY": True,   # Rhetoric -> Encyclopedia context lookup
     "VOLITION_INLAND_EMPIRE_SYNERGY": True,  # Volition -> Inland Empire action logging
     "ENCYCLOPEDIA_CACHE_SYNERGY": True,      # Encyclopedia -> Inland Empire caching
+
+    # Encyclopedia adaptive features (Phase 5)
+    "ENCYCLOPEDIA_ADAPTIVE_WEIGHTS": False,  # Adaptive source weights (requires 200+ queries)
 }
 
 
